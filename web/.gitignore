@@ -42,3 +42,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Appended by `vercel link`. The bare `.env*` here would re-ignore
+# `.env.example`, because in gitignore the LAST matching pattern wins and this
+# sits after the negation above. Re-assert it.
+!.env.example

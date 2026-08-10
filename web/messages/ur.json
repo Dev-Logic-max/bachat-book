@@ -1,0 +1,67 @@
+{
+  "app": {
+    "name": "بچت بک",
+    "tagline": "پاکستان کے لیے پریمیم ذاتی فنانس"
+  },
+  "auth": {
+    "signInTitle": "بچت بک میں سائن ان کریں",
+    "signInSubtitle": "خوش آمدید! اپنے اکاؤنٹ تک رسائی حاصل کرنے کے لیے تفصیلات درج کریں۔",
+    "signUpTitle": "اپنا اکاؤنٹ بنائیں",
+    "signUpSubtitle": "اپنے ذاتی اور خاندانی مالیات کو آسانی سے منظم کرنا شروع کریں۔",
+    "forgotPasswordTitle": "پاس ورڈ ری سیٹ کریں",
+    "forgotPasswordSubtitle": "اپنا ای میل درج کریں اور ہم آپ کو لنک بھیجیں گے۔",
+    "email": "ای میل ایڈریس",
+    "password": "پاس ورڈ",
+    "firstName": "پہلا نام",
+    "lastName": "آخری نام",
+    "signInBtn": "سائن ان کریں",
+    "signUpBtn": "اکاؤنٹ بنائیں",
+    "resetBtn": "ری سیٹ لنک بھیجیں",
+    "orContinueWith": "یا کے ساتھ جاری رکھیں",
+    "googleSignIn": "گوگل کے ساتھ جاری رکھیں",
+    "comingSoonToast": "گوگل سائن ان جلد آرہا ہے!",
+    "noAccount": "کیا آپ کے پاس اکاؤنٹ نہیں ہے؟",
+    "hasAccount": "پہلے سے ہی اکاؤنٹ موجود ہے؟",
+    "forgotPasswordLink": "پاس ورڈ بھول گئے؟",
+    "backToSignIn": "سائن ان پر واپس جائیں"
+  },
+  "welcome": {
+    "greeting": "السلام علیکم",
+    "subtitle": "آئیے اپنے مالیات کا سیٹ اپ کریں",
+    "city": "شہر",
+    "occupation": "پیشہ (اختیاری)",
+    "isFiler": "کیا آپ ایف بی آر ایکٹو ٹیکس فائلر ہیں؟",
+    "isFilerHelp": "بچت اور پرائز بانڈز پر ٹیکس کی شرحوں کا حساب لگانے میں مدد کرتا ہے۔",
+    "getStarted": "شروع کریں",
+    "skipForNow": "ابھی چھوڑ دیں"
+  },
+  "dashboard": {
+    "greeting": "السلام علیکم",
+    "addExpense": "خرچہ شامل کریں",
+    "addIncome": "آمدن شامل کریں",
+    "addTask": "ٹاسک شامل کریں",
+    "netWorth": "کل اثاثے (نیٹ ورتھ)",
+    "recentActivity": "حالیہ سرگرمی",
+    "budgets": "بجٹ",
+    "tasks": "ضروری ٹاسک",
+    "emptyTransactionsTitle": "ابھی کوئی سرگرمی نہیں",
+    "emptyTransactionsDesc": "اپنا پہلا خرچہ یا آمدن شامل کرکے شروعات کریں۔",
+    "emptyTasksTitle": "کوئی ٹاسک باقی نہیں",
+    "emptyTasksDesc": "آپ کے تمام مالیاتی کام مکمل ہیں۔"
+  },
+  "settings": {
+    "title": "سیٹنگز",
+    "profile": "پروفائل",
+    "preferences": "ترجیحات",
+    "workspaces": "ورک اسپیس اور گھرانے",
+    "plan": "سبسکرپشن پلان",
+    "language": "زبان",
+    "theme": "تھیم",
+    "numberFormat": "نمبر فارمیٹ",
+    "filerStatus": "ایف بی آر فائلر اسٹیٹس",
+    "nisabStandard": "نصاب کا معیار",
+    "saveChanges": "تبدیلیاں محفوظ کریں",
+    "savedSuccess": "سیٹنگز کامیابی سے اپ ڈیٹ ہو گئیں"
+  }
+}
+

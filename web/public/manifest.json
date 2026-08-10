@@ -1,0 +1,16 @@
+{
+  "name": "Bachat Book - Pakistani Household Finance & Wealth",
+  "short_name": "Bachat Book",
+  "description": "Premium Pakistani Household Finance Tracker, Hijri Calendar, Zakat Calculator & FBR Tax Assistant.",
+  "start_url": "/dashboard",
+  "display": "standalone",
+  "background_color": "#0B132B",
+  "theme_color": "#C59B27",
+  "icons": [
+    {
+      "src": "/branding/favicon.ico",
+      "sizes": "64x64 32x32 24x24 16x16",
+      "type": "image/x-icon"
+    }
+  ]
+}

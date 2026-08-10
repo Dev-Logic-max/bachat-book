@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Bachat Book",
+    "slug": "bachat-book",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "scheme": "bachatbook",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.bachatbook.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0B1A33"
+      },
+      "package": "com.bachatbook.app"
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Bachat Book requires camera access to scan receipt invoices."
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Bachat Book requires photo library access to upload receipt images."
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Bachat Book requires Face ID to secure your financial records."
+        }
+      ]
+    ]
+  }
+}

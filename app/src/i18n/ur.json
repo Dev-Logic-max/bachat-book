@@ -1,0 +1,59 @@
+{
+  "app": {
+    "name": "بچت بک",
+    "tagline": "شخصی اور گھریلو مالیات"
+  },
+  "auth": {
+    "signIn": "سائن ان کریں",
+    "signUp": "سائن اپ کریں",
+    "forgotPassword": "پاس ورڈ بھول گئے؟",
+    "email": "ای میل ایڈریس",
+    "password": "پاس ورڈ",
+    "firstName": "پہلا نام",
+    "lastName": "آخری نام",
+    "resetPassword": "پاس ورڈ ری سیٹ کریں",
+    "sendResetLink": "ری سیٹ لنک بھیجیں",
+    "alreadyHaveAccount": "پہلے سے اکاؤنٹ ہے؟ سائن ان کریں",
+    "dontHaveAccount": "اکاؤنٹ نہیں ہے؟ سائن اپ کریں",
+    "backToSignIn": "سائن ان پر واپس جائیں",
+    "signedInAs": "سائن ان بطور",
+    "signOut": "سائن آؤٹ"
+  },
+  "tabs": {
+    "overview": "جائزہ",
+    "transactions": "اندراجات",
+    "accounts": "اکاؤنٹس",
+    "calendar": "کیلنڈر",
+    "committees": "کمیٹیاں"
+  },
+  "overview": {
+    "totalBalance": "کل بقایا",
+    "monthlyIncome": "آمدن",
+    "monthlyExpenses": "اخراجات",
+    "recentEntries": "حالیہ اندراجات",
+    "seeAll": "سب دیکھیں",
+    "quickAdd": "فوری اندراج"
+  },
+  "entries": {
+    "addEntry": "فوری اندراج کریں",
+    "editEntry": "اندراج میں ترمیم کریں",
+    "income": "آمدن",
+    "expense": "خرچہ",
+    "amount": "رقم",
+    "category": "زمرہ",
+    "note": "نوٹ / تفصیل",
+    "date": "تاریخ",
+    "linkAccount": "اکاؤنٹ سے منسلک کریں",
+    "save": "محفوظ کریں",
+    "delete": "حذف کریں",
+    "confirmDelete": "اندراج حذف کریں؟"
+  },
+  "common": {
+    "cancel": "منسوخ کریں",
+    "confirm": "تصدیق کریں",
+    "loading": "لوڈ ہو رہا ہے...",
+    "error": "کوئی خرابی پیش آ گئی",
+    "retry": "دوبارہ کوشش کریں",
+    "success": "کامیاب"
+  }
+}

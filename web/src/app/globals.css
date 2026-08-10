@@ -1,0 +1,358 @@
+@import "tailwindcss";
+
+/*
+ * Cream / navy / brass.
+ *
+ * The whole premium read depends on three things holding:
+ *   1. the canvas is warm cream, never white — white cards separate against it
+ *      without needing borders
+ *   2. navy is a real dark mass, present on every screen (rail + one band)
+ *   3. brass stays under ~10% coverage and never touches shadows or borders
+ *
+ * Shadows are NEUTRAL. A brass- or navy-tinted shadow on cream reads as haze,
+ * not depth.
+ */
+
+@custom-variant dark (&:where([data-mode="dark"], [data-mode="dark"] *));
+
+:root {
+  /* surfaces */
+  --canvas: #f8f6f1;
+  --surface: #ffffff;
+  --surface-subtle: #f1ede4;
+  --surface-3: #e8e2d6;
+  --border: #e6e0d4;
+  --border-strong: #d8d0be;
+
+  /* dark mass */
+  --navy-900: #0b1a33;
+  --navy-800: #12264a;
+  --navy-700: #1b3563;
+  --on-navy: #eae6dc;
+  --on-navy-muted: #97a3b8;
+
+  /* accent */
+  --brass: #c6a15b;
+  --brass-soft: #f2e9d6;
+  --brass-strong: #a8843f;
+
+  /* text */
+  --foreground: #0d1420;
+  --foreground-2: #3a4150;
+  --muted: #6e6a62;
+  --faint: #9a958a;
+
+  /* semantic — deltas and badges only, never surfaces */
+  --gain: #0f8b5f;
+  --gain-soft: #e2f2ea;
+  --loss: #b4342a;
+  --loss-soft: #f8e6e4;
+  --warn: #b8791f;
+  --warn-soft: #fbf0dc;
+
+  /* data viz — muted, reads on cream. brass leads. */
+  --chart-1: #c6a15b;
+  --chart-2: #1b3563;
+  --chart-3: #2f7a6f;
+  --chart-4: #7c4a6b;
+  --chart-5: #7b8f5e;
+  --chart-6: #b0704a;
+
+  /* elevation */
+  --shadow-sm: 0 1px 2px rgb(11 26 51 / 0.05);
+  --shadow-md:
+    0 1px 2px rgb(11 26 51 / 0.05), 0 8px 20px -8px rgb(11 26 51 / 0.1);
+  --shadow-lg:
+    0 2px 4px rgb(11 26 51 / 0.06), 0 20px 40px -16px rgb(11 26 51 / 0.16);
+}
+
+/* Designed dark mode — not an inversion. */
+[data-mode="dark"] {
+  --canvas: #080f1c;
+  --surface: #0f1a2e;
+  --surface-subtle: #14213a;
+  --surface-3: #1c2a44;
+  --border: #1c2a44;
+  --border-strong: #2a3a58;
+
+  /* Inverted on purpose. In light mode the band is the dark mass against cream;
+     in dark mode it has to LIFT off the canvas or it disappears into it —
+     #060c17 on a #080f1c canvas was a 2-value difference. */
+  --navy-900: #101d33;
+  --navy-800: #17253d;
+  --navy-700: #22344f;
+  --on-navy: #efeae0;
+  --on-navy-muted: #8b97ad;
+
+  --brass: #d9b978;
+  --brass-soft: #2a2418;
+  --brass-strong: #efd39b;
+
+  --foreground: #efeae0;
+  --foreground-2: #c3bdb0;
+  --muted: #8e897d;
+  --faint: #6b675e;
+
+  --gain-soft: #0d2a1f;
+  --loss-soft: #2e1512;
+  --warn-soft: #2b2010;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 20px -8px rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 2px 4px rgb(0 0 0 / 0.5), 0 20px 40px -16px rgb(0 0 0 / 0.7);
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-surface-3: var(--surface-3);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+
+  --color-navy-900: var(--navy-900);
+  --color-navy-800: var(--navy-800);
+  --color-navy-700: var(--navy-700);
+  --color-on-navy: var(--on-navy);
+  --color-on-navy-muted: var(--on-navy-muted);
+
+  --color-brass: var(--brass);
+  --color-brass-soft: var(--brass-soft);
+  --color-brass-strong: var(--brass-strong);
+
+  --color-foreground: var(--foreground);
+  --color-foreground-2: var(--foreground-2);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+
+  --color-gain: var(--gain);
+  --color-gain-soft: var(--gain-soft);
+  --color-loss: var(--loss);
+  --color-loss-soft: var(--loss-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+
+  /* App density radii — tighter than the mobile/marketing 20-28px band. */
+  --radius-control: 10px;
+  --radius-card: 14px;
+  --radius-panel: 18px;
+  --radius-modal: 22px;
+
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+
+  --font-display: var(--font-fraunces), Georgia, serif;
+  --font-sans: var(--font-inter), system-ui, sans-serif;
+  --font-mono: var(--font-jetbrains), ui-monospace, monospace;
+  --font-urdu: var(--font-nastaliq), serif;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@layer base {
+  html {
+    background: var(--canvas);
+  }
+
+  body {
+    background: var(--canvas);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /*
+   * Urdu is a TEXT-level change, not a layout one. `<html>` stays dir="ltr" in
+   * every locale, so there is one layout to design and screenshot. Only copy
+   * marked `.copy` (see components/t.tsx) switches face and direction.
+   *
+   * Nastaliq needs far more leading than Latin or the strokes collide.
+   */
+  .copy:lang(ur) {
+    font-family: var(--font-urdu);
+    line-height: 2;
+    /* Per-paragraph auto direction: Urdu runs read RTL, embedded Latin and
+       digits stay LTR, without touching the surrounding layout. */
+    unicode-bidi: plaintext;
+  }
+
+  ::selection {
+    background: var(--brass-soft);
+    color: var(--foreground);
+  }
+
+  /*
+   * Thin page scrollbar. Both tokens flip with the mode, so this needs no dark
+   * override — defining the colour only inside a [data-mode] block would leave
+   * the light theme borrowing the UA default.
+   *
+   * Firefox gets `scrollbar-width`; WebKit/Blink need the pseudo-elements, and
+   * they ignore `scrollbar-width` entirely, so both are required.
+   */
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-strong);
+    border-radius: 999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted);
+  }
+
+  /* Corner where two scrollbars meet — unstyled it paints UA grey. */
+  ::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+}
+
+@layer utilities {
+  /*
+   * Money and KPI figures must never jitter as they animate.
+   *
+   * `direction: ltr` + `unicode-bidi: isolate` is load-bearing in Urdu, not a
+   * nicety: inside an RTL paragraph the bidi algorithm moves a leading sign to
+   * the trailing edge, so "-Rs 899" renders as "Rs 899-" and "+28.3%" as
+   * "28.3%+". Isolating the run isolates the sign with it.
+   */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum";
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  /* Same treatment for runs that are numeric but not tabular — dates, FX
+     quotes, kbd hints — wherever a Latin fragment sits in Urdu prose. */
+  .ltr {
+    direction: ltr;
+    unicode-bidi: isolate;
+  }
+
+  /*
+   * Scrolls, but shows no scrollbar. For the rail's nav column: a visible track
+   * inside a 248px dark panel reads as a seam. Must stay scrollable — hiding the
+   * bar is not the same as `overflow: hidden`, which would strand the last nav
+   * items on a short viewport.
+   */
+  .scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scrollbar-none::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Asset ticker rotation: cross-fade with a 4px rise. Replayed by remounting
+     the row with a new `key` — see components/asset-ticker.tsx. */
+  .ticker-swap {
+    animation: ticker-swap 420ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes ticker-swap {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* Entrance: fade + 8px rise. `both` fill mode matters — with the global
+     reduced-motion rule collapsing the duration, the element settles on the
+     `to` state instead of staying at opacity 0. */
+  .reveal {
+    animation: reveal 220ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+
+  @keyframes reveal {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  /* Skeleton shimmer. A travelling highlight rather than a pulsing opacity —
+     pulse reads as "broken", sweep reads as "loading". */
+  .shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.55),
+      transparent
+    );
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+
+  [data-mode="dark"] .shimmer::after {
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgb(255 255 255 / 0.07),
+      transparent
+    );
+  }
+
+  @keyframes shimmer {
+    100% {
+      transform: translateX(100%);
+    }
+  }
+
+  /* Gemini renders arrive off-white with a vignette; multiply drops the box. */
+  .render-blend {
+    mix-blend-mode: multiply;
+  }
+
+  [data-mode="dark"] .render-blend {
+    mix-blend-mode: normal;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

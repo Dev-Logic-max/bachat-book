@@ -1,0 +1,59 @@
+{
+  "app": {
+    "name": "Bachat Book",
+    "tagline": "Personal & Household Finance"
+  },
+  "auth": {
+    "signIn": "Sign In",
+    "signUp": "Sign Up",
+    "forgotPassword": "Forgot Password?",
+    "email": "Email Address",
+    "password": "Password",
+    "firstName": "First Name",
+    "lastName": "Last Name",
+    "resetPassword": "Reset Password",
+    "sendResetLink": "Send Reset Link",
+    "alreadyHaveAccount": "Already have an account? Sign in",
+    "dontHaveAccount": "Don't have an account? Sign up",
+    "backToSignIn": "Back to Sign In",
+    "signedInAs": "Signed in as",
+    "signOut": "Sign Out"
+  },
+  "tabs": {
+    "overview": "Overview",
+    "transactions": "Entries",
+    "accounts": "Accounts",
+    "calendar": "Calendar",
+    "committees": "Committees"
+  },
+  "overview": {
+    "totalBalance": "Total Balance",
+    "monthlyIncome": "Income",
+    "monthlyExpenses": "Expenses",
+    "recentEntries": "Recent Entries",
+    "seeAll": "See All",
+    "quickAdd": "Quick Add"
+  },
+  "entries": {
+    "addEntry": "Add Quick Entry",
+    "editEntry": "Edit Entry",
+    "income": "Income",
+    "expense": "Expense",
+    "amount": "Amount",
+    "category": "Category",
+    "note": "Note / Description",
+    "date": "Date",
+    "linkAccount": "Link to Account",
+    "save": "Save Entry",
+    "delete": "Delete",
+    "confirmDelete": "Delete Entry?"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "loading": "Loading...",
+    "error": "An error occurred",
+    "retry": "Retry",
+    "success": "Success"
+  }
+}

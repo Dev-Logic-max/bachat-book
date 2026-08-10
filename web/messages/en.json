@@ -1,0 +1,67 @@
+{
+  "app": {
+    "name": "Bachat Book",
+    "tagline": "Premium personal finance for Pakistan"
+  },
+  "auth": {
+    "signInTitle": "Sign in to Bachat Book",
+    "signInSubtitle": "Welcome back! Enter your details to access your account.",
+    "signUpTitle": "Create your account",
+    "signUpSubtitle": "Start managing your personal & family finances with ease.",
+    "forgotPasswordTitle": "Reset your password",
+    "forgotPasswordSubtitle": "Enter your email and we'll send you a password reset link.",
+    "email": "Email address",
+    "password": "Password",
+    "firstName": "First name",
+    "lastName": "Last name",
+    "signInBtn": "Sign In",
+    "signUpBtn": "Create Account",
+    "resetBtn": "Send Reset Link",
+    "orContinueWith": "or continue with",
+    "googleSignIn": "Continue with Google",
+    "comingSoonToast": "Google OAuth is coming soon!",
+    "noAccount": "Don't have an account?",
+    "hasAccount": "Already have an account?",
+    "forgotPasswordLink": "Forgot password?",
+    "backToSignIn": "Back to sign in"
+  },
+  "welcome": {
+    "greeting": "Assalam-o-Alaikum",
+    "subtitle": "Let's set up your finances for Pakistan",
+    "city": "City",
+    "occupation": "Occupation (Optional)",
+    "isFiler": "Are you an FBR Active Tax Filer?",
+    "isFilerHelp": "Helps calculate tax rates on savings & prize bonds.",
+    "getStarted": "Get Started",
+    "skipForNow": "Skip for now"
+  },
+  "dashboard": {
+    "greeting": "Assalam-o-Alaikum",
+    "addExpense": "Add Expense",
+    "addIncome": "Add Income",
+    "addTask": "Add Task",
+    "netWorth": "Net Worth",
+    "recentActivity": "Recent Activity",
+    "budgets": "Budgets",
+    "tasks": "Needs You",
+    "emptyTransactionsTitle": "No activity yet",
+    "emptyTransactionsDesc": "Start by adding your first expense or income.",
+    "emptyTasksTitle": "No tasks pending",
+    "emptyTasksDesc": "You're all caught up on your financial to-dos."
+  },
+  "settings": {
+    "title": "Settings",
+    "profile": "Profile",
+    "preferences": "Preferences",
+    "workspaces": "Workspaces & Households",
+    "plan": "Subscription Plan",
+    "language": "Language",
+    "theme": "Theme",
+    "numberFormat": "Number Format",
+    "filerStatus": "FBR Filer Status",
+    "nisabStandard": "Nisab Standard",
+    "saveChanges": "Save Changes",
+    "savedSuccess": "Settings updated successfully"
+  }
+}
+

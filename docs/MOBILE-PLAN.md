@@ -694,7 +694,7 @@ the web app's ledger with the right paisa amount.
 | Privacy policy page | Does not exist | Play Store data-safety declaration requires it |
 | Crash reporting | Not chosen | Sentry vs Bugsnag vs Firebase Crashlytics — pick before M10 |
 | `pnpm` vs Expo prebuild | Untested | Expo's prebuild expects `npm` or `yarn`; `pnpm` may need `node-linker=hoisted` in `.npmrc` |
-| Seed credentials | Still in repo | `admin@bachatbook.com` / `<see your password manager -- not committed>` must be rotated or deleted before **any** APK goes to anyone, internal track included |
+| Seed credentials | Scrubbed from the repo, **still live in Supabase** | `admin@bachatbook.com` is a real `super_admin`. Its password is no longer in any file or commit, but the account still works. Rotate or delete it — the web app is publicly deployed, so this is overdue, not pending. |
 
 ---
 

@@ -207,4 +207,5 @@ advisor disclaimer added to the Zakat and Tax surfaces.
 - **3D assets** — prompts in `ASSET-PROMPTS.md`, waiting on generation. B1/B2/B3 unblock the most screens.
 - **Leaked-password protection is off** in Supabase Auth. Turn it on before real signups.
 - **Google/Microsoft OAuth** — needs app registration in both consoles before M3 calendar sync.
-- **`<see your password manager -- not committed>` must be rotated** before any public deploy.
+- **The seed password must be rotated.** The web app is now publicly deployed at
+  `bachat-book-seven.vercel.app`, so this is overdue rather than pending.

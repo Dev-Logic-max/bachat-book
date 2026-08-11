@@ -112,9 +112,18 @@ and the cash-flow chart has no contradictory months.
 
 ### 2.5 Rotate the seed credentials
 
-`admin@bachatbook.com` / `<see your password manager -- not committed>` is in `ROADMAP.md`, `db/README.md`
-and this repo's history. Development-only. Must be rotated or deleted before
-any public deploy.
+The seed super_admin now lives only in `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD`
+in `web/.env.local` (gitignored, no `NEXT_PUBLIC_` prefix — that would inline a
+password into the browser bundle). Docs name the variables; nothing carries the
+value.
+
+It was previously written in plaintext into `ROADMAP.md`, `db/README.md` and
+`SESSION-START.md`, and was scrubbed from all three **before** the first commit —
+verified with `git log --all -S`, so it never entered git history and is not in
+the public repo.
+
+**The account itself is still live, and the web app is now publicly deployed at
+`bachat-book-seven.vercel.app`.** Rotating it is overdue, not pending.
 
 Also delete the two probe accounts: `ar3991492+probe1@gmail.com`,
 `ar3991492+probe2@gmail.com`.

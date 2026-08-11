@@ -12,7 +12,7 @@ The database is **live, seeded and verified end to end**. See `db/README.md`.
 - Supabase project `Bachat Book` · ref `brunpltiektawjtcivwa` · `ap-south-1`
 - M1 schema applied: profiles, user_roles, households, household_members, plans, subscriptions, preferences — with RLS policies and helper functions
 - Free and Pro plan rows loaded
-- **Sign-in works against the real endpoint**: `admin@bachatbook.com` / `<see your password manager -- not committed>` returns a token, and that token reads exactly its own household
+- **Sign-in works against the real endpoint**: `$SEED_ADMIN_EMAIL` / `$SEED_ADMIN_PASSWORD` (both in `web/.env.local`, gitignored) returns a token, and that token reads exactly its own household
 - Isolation verified through the REST API: anon sees **0 rows** on every tenant table
 - Trigger functions revoked from the REST RPC surface
 - `web/.env.local` and `.env.example` written; `@supabase/ssr` installed; clients at `web/src/lib/supabase/`

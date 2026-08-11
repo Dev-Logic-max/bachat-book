@@ -53,7 +53,7 @@ as the querying role, so revoking that breaks every policy that calls them.
 |---|---|
 | Name | Abdul Rehman |
 | Email | `admin@bachatbook.com` |
-| Password | `<see your password manager -- not committed>` |
+| Password | `SEED_ADMIN_PASSWORD` in `web/.env.local` (gitignored) |
 | Platform roles | `user`, `super_admin` |
 | Household | Rehman Family (`owner`), Karachi |
 | Plan | Pro |

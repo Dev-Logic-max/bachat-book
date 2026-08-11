@@ -149,7 +149,7 @@ conversion drivers; each shows a real rupee number Pro would save.
 |---|---|
 | Name | **Abdul Rehman** |
 | Email | `admin@bachatbook.com` |
-| Password | `<see your password manager -- not committed>` |
+| Password | `SEED_ADMIN_PASSWORD` in `web/.env.local` (gitignored) |
 | Platform role | `super_admin` |
 | Household | "Rehman Family", role `owner` |
 

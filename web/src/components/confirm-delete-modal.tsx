@@ -5,7 +5,6 @@ import { AlertTriangle, Link2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { formatPKR } from "@/lib/format";
-import { cn } from "@/lib/utils";
 
 export interface LinkedRef {
   /** What kind of thing this is — "Transaction", "Task", "Calendar event". */
@@ -26,12 +25,15 @@ export interface BalanceImpact {
  *  - Always shown, linked or not. Nothing is ever deleted on one click.
  *  - Names the record being deleted, with amount and date.
  *  - Lists EVERY linked record by kind and name.
- *  - The "also delete linked records" checkbox is CHECKED BY DEFAULT, so the
- *    ordinary path removes the whole linked set.
  *  - Unchecking means: unlink first, THEN delete only this record. Order matters,
  *    and `onConfirm` receives the choice so the caller can sequence it.
  *  - Because the default path can move a real bank balance, the consequence is
  *    stated in words rather than left for the user to infer.
+ *
+ * The checkbox DEFAULT is per call site, not global. Deleting a transfer leg
+ * defaults to checked, because one leg alone creates money. Deleting a task that
+ * wrote a ledger entry defaults to UNCHECKED, because the money genuinely moved
+ * in real life and tidying the to-do list must not quietly un-spend it.
  */
 export function ConfirmDeleteModal({
   isOpen,
@@ -43,6 +45,9 @@ export function ConfirmDeleteModal({
   linkedRefs = [],
   balanceImpact,
   confirmLabel = "Delete",
+  defaultCascade = true,
+  cascadeLabel,
+  cascadeHint,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -54,17 +59,22 @@ export function ConfirmDeleteModal({
   linkedRefs?: LinkedRef[];
   balanceImpact?: BalanceImpact;
   confirmLabel?: string;
+  /** Whether "also delete linked records" starts ticked. */
+  defaultCascade?: boolean;
+  cascadeLabel?: string;
+  /** Replaces the generic explanation under the checkbox when it is UNCHECKED. */
+  cascadeHint?: string;
 }) {
   const hasLinks = linkedRefs.length > 0;
-  const [cascade, setCascade] = React.useState(true);
+  const [cascade, setCascade] = React.useState(defaultCascade);
   const [busy, setBusy] = React.useState(false);
 
-  // Reset to the default (checked) each time the modal is reopened, rather than
-  // carrying the previous record's choice into an unrelated delete.
+  // Reset to this call site's default each time the modal is reopened, rather
+  // than carrying the previous record's choice into an unrelated delete.
   const [wasOpen, setWasOpen] = React.useState(isOpen);
   if (wasOpen !== isOpen) {
     setWasOpen(isOpen);
-    if (isOpen) setCascade(true);
+    if (isOpen) setCascade(defaultCascade);
   }
 
   const handleConfirm = async () => {
@@ -90,21 +100,14 @@ export function ConfirmDeleteModal({
           <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <button
+          <Button
             type="button"
+            variant="danger"
             onClick={handleConfirm}
-            disabled={busy}
-            className={cn(
-              "bg-loss rounded-control px-4 py-2 text-xs font-semibold text-white transition-opacity",
-              "hover:opacity-90 disabled:opacity-50",
-            )}
+            isLoading={busy}
           >
-            {busy
-              ? "Deleting…"
-              : hasLinks && cascade
-                ? `${confirmLabel} all`
-                : confirmLabel}
-          </button>
+            {hasLinks && cascade ? `${confirmLabel} all` : confirmLabel}
+          </Button>
         </>
       }
     >
@@ -151,13 +154,14 @@ export function ConfirmDeleteModal({
               />
               <span className="min-w-0">
                 <span className="text-foreground block text-[12.5px] font-medium">
-                  Also delete the linked{" "}
-                  {linkedRefs.length === 1 ? "record" : "records"}
+                  {cascadeLabel ??
+                    `Also delete the linked ${linkedRefs.length === 1 ? "record" : "records"}`}
                 </span>
                 <span className="text-muted mt-0.5 block text-[11.5px] leading-snug">
                   {cascade
                     ? "Everything above is removed together."
-                    : "Only this record is deleted. The rest are unlinked first and continue on their own."}
+                    : (cascadeHint ??
+                      "Only this record is deleted. The rest are unlinked first and continue on their own.")}
                 </span>
               </span>
             </label>

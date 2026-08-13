@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Lock } from "lucide-react";
+import { ArrowRight, CalendarClock, Lock, Scale } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
@@ -12,6 +12,7 @@ import { accountTypeOptions } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
 import { ACCOUNT_TYPE_LABEL, institutionLogo } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
+import { cn } from "@/lib/utils";
 
 import type { AccountType, Tables } from "@/lib/supabase/types";
 
@@ -161,7 +162,13 @@ export function EditAccountModal({
       }
     >
       <div className="space-y-4">
-        {/* Identity band: who this account is with, and since when. */}
+        {/*
+          Identity band: who this account is with, and since when.
+
+          Read-only on purpose. Repointing an account at a different bank while
+          its transactions stay put would silently relabel every one of them — if
+          that is genuinely needed, the honest move is a new account.
+        */}
         <div className="bg-surface-subtle border-border flex items-center gap-3 rounded-card border p-3.5">
           <MerchantMark
             name={inst?.short_name ?? (isCash ? "Cash" : account.name)}
@@ -170,15 +177,20 @@ export function EditAccountModal({
             awaitingLogo={Boolean(inst && !inst.logo_path)}
             size={38}
           />
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <p className="text-foreground truncate text-[13px] font-semibold">
               {inst?.name ?? "Cash in hand"}
             </p>
-            <p className="text-muted mt-0.5 text-[11px]">
-              {inst ? "Institution · " : "No institution · "}
-              added <span className="ltr">{created}</span>
+            <p className="text-faint mt-0.5 flex items-center gap-1 text-[11px]">
+              <CalendarClock size={11} className="shrink-0" />
+              <span className="italic">
+                added <span className="ltr not-italic">{created}</span>
+              </span>
             </p>
           </div>
+          <span className="border-border text-faint shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium">
+            {isCash ? "Default account" : "Institution"}
+          </span>
         </div>
 
         <Input
@@ -211,32 +223,82 @@ export function EditAccountModal({
           />
         </div>
 
-        <div className="border-border space-y-3 rounded-card border p-3.5">
-          <Input
-            label="Correct the balance (PKR)"
-            type="number"
-            step="any"
-            value={correctedBalance}
-            onChange={(e) => setCorrectedBalance(e.target.value)}
-            className="tnum"
-          />
-          <p className="text-muted text-[11.5px] leading-snug">
-            Currently{" "}
-            <span className="tnum font-medium">{formatPKR(currentBalance)}</span>.
-            {adjustmentPaisa !== 0 ? (
-              <>
-                {" "}
-                Saving adds a{" "}
-                <span className="tnum font-medium">
-                  {formatPKR(Math.abs(adjustmentPaisa))}
-                </span>{" "}
-                {adjustmentPaisa > 0 ? "credit" : "debit"} labelled “Balance
-                correction” to the ledger, so the ledger still sums to the balance.
-              </>
-            ) : (
-              " Change this only to reconcile against a bank statement."
-            )}
-          </p>
+        {/*
+          Reconciliation, not a balance field.
+
+          The number here is DERIVED from the ledger, so this box does not set it
+          — it works out the difference and writes that difference as a real
+          movement. Saying so matters: an input pre-filled with the current
+          balance looks editable, and a user who types over it expects the figure
+          to change silently rather than a "Balance correction" row to appear in
+          their August spending.
+        */}
+        <div className="border-border overflow-hidden rounded-card border">
+          <div className="bg-surface-subtle border-border flex items-center gap-2 border-b px-3.5 py-2.5">
+            <Scale size={13} className="text-brass-strong shrink-0" />
+            <span className="text-foreground-2 text-[12px] font-medium">
+              Reconcile against your statement
+            </span>
+            <span className="text-faint ms-auto text-[10.5px] italic">optional</span>
+          </div>
+
+          <div className="space-y-3 p-3.5">
+            <Input
+              label="What the balance should be (PKR)"
+              type="number"
+              step="any"
+              value={correctedBalance}
+              onChange={(e) => setCorrectedBalance(e.target.value)}
+              className="tnum"
+            />
+
+            <div className="flex items-center gap-2.5 text-[11.5px]">
+              <span className="text-muted shrink-0">Now</span>
+              <span className="tnum text-foreground-2 font-medium">
+                {formatPKR(currentBalance)}
+              </span>
+              {adjustmentPaisa !== 0 && (
+                <>
+                  <ArrowRight size={12} className="text-faint shrink-0" />
+                  <span
+                    className={cn(
+                      "tnum font-semibold",
+                      adjustmentPaisa > 0 ? "text-gain" : "text-loss",
+                    )}
+                  >
+                    {formatPKR(targetPaisa)}
+                  </span>
+                  <span
+                    className={cn(
+                      "ms-auto shrink-0 rounded-full px-2 py-0.5 text-[10.5px] font-semibold",
+                      adjustmentPaisa > 0
+                        ? "bg-gain-soft text-gain"
+                        : "bg-loss-soft text-loss",
+                    )}
+                  >
+                    {adjustmentPaisa > 0 ? "+" : "−"}
+                    {formatPKR(Math.abs(adjustmentPaisa))}
+                  </span>
+                </>
+              )}
+            </div>
+
+            <p className="text-faint text-[11px] italic leading-snug">
+              {adjustmentPaisa !== 0 ? (
+                <>
+                  Saving writes a{" "}
+                  <span className="tnum not-italic">
+                    {formatPKR(Math.abs(adjustmentPaisa))}
+                  </span>{" "}
+                  {adjustmentPaisa > 0 ? "credit" : "debit"} labelled “Balance
+                  correction” into the ledger — the balance is derived from the
+                  ledger, so it is the only honest way to move it.
+                </>
+              ) : (
+                "Use this only when a bank statement disagrees with the figure above. Everyday income and spending belong in Entries."
+              )}
+            </p>
+          </div>
         </div>
 
         {/* Cash is the fallback every entry lands on, so it can never be locked. */}

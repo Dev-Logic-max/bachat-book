@@ -2,20 +2,31 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { Landmark, Wallet, Banknote, Plus, ArrowUpRight, Lock, PowerOff } from "lucide-react";
+import {
+  Landmark,
+  Wallet,
+  Banknote,
+  Plus,
+  ArrowUpRight,
+  EyeOff,
+  History,
+  Lock,
+  Power,
+  PowerOff,
+  ShieldCheck,
+  Wallet2,
+} from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
+import { PageActions } from "@/components/page-actions";
 import { AddAccountModal } from "@/components/add-account-modal";
 import { EditAccountModal } from "@/components/edit-account-modal";
-import { DeleteAccountModal } from "@/components/delete-account-modal";
+import { ConfirmActionModal } from "@/components/confirm-action-modal";
 import { RowActions } from "@/components/ui/row-actions";
 import { useToast } from "@/components/ui/toast";
-import { ACCOUNT_TYPE_LABEL } from "@/lib/ledger";
-import {
-  countAccountMovements,
-  deleteAccount,
-  setAccountActive,
-} from "@/lib/ledger-actions";
+import { MerchantMark } from "@/components/merchant-mark";
+import { ACCOUNT_TYPE_LABEL, institutionLogo } from "@/lib/ledger";
+import { countAccountMovements, setAccountActive } from "@/lib/ledger-actions";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import { formatPKR, formatPKRCompact } from "@/lib/format";
@@ -33,10 +44,14 @@ export default function AccountsPage() {
   const [loading, setLoading] = React.useState(true);
   const [addModalOpen, setAddModalOpen] = React.useState(false);
   const [editingAccount, setEditingAccount] = React.useState<AccountWithInstitution | null>(null);
-  const [deletingAccount, setDeletingAccount] =
+  /*
+   * Deactivation is reversible, but "reversible" is not the same as "obvious" —
+   * nothing on the card says what switching an account off actually does to the
+   * held total or to the pickers. The dialog says it before the click lands.
+   */
+  const [togglingAccount, setTogglingAccount] =
     React.useState<AccountWithInstitution | null>(null);
-  const [deletingCount, setDeletingCount] = React.useState<number | null>(null);
-  const [busy, setBusy] = React.useState(false);
+  const [togglingCount, setTogglingCount] = React.useState<number | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
   const { showToast } = useToast();
 
@@ -85,7 +100,15 @@ export default function AccountsPage() {
     (a) => a.type === "cash" || a.type === "credit" || a.type === "investment"
   );
 
-  const handleToggleActive = async (account: AccountWithInstitution) => {
+  const openToggle = async (account: AccountWithInstitution) => {
+    setTogglingAccount(account);
+    setTogglingCount(null);
+    setTogglingCount(await countAccountMovements(supabase, account.id));
+  };
+
+  const handleToggleActive = async () => {
+    const account = togglingAccount;
+    if (!account) return;
     try {
       await setAccountActive(supabase, account.id, account.is_archived);
       showToast({
@@ -95,6 +118,7 @@ export default function AccountsPage() {
           ? `"${account.name}" can be used again.`
           : `"${account.name}" is hidden from every picker. Its records are kept.`,
       });
+      setTogglingAccount(null);
       setRefreshKey((k) => k + 1);
     } catch (err) {
       showToast({
@@ -105,53 +129,31 @@ export default function AccountsPage() {
     }
   };
 
-  const openDelete = async (account: AccountWithInstitution) => {
-    setDeletingAccount(account);
-    setDeletingCount(null);
-    setDeletingCount(await countAccountMovements(supabase, account.id));
-  };
-
-  const handleDelete = async () => {
-    if (!deletingAccount) return;
-    setBusy(true);
-    try {
-      await deleteAccount(supabase, deletingAccount.id);
-      showToast({
-        type: "success",
-        title: "Account deleted",
-        description: `Its past records are kept and now show a "Deleted account" tag.`,
-      });
-      setDeletingAccount(null);
-      setRefreshKey((k) => k + 1);
-    } catch (err) {
-      showToast({
-        type: "error",
-        title: "Could not delete the account",
-        description: err instanceof Error ? err.message : "Unknown error.",
-      });
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Financial Accounts Wall</h1>
-          <p className="text-muted text-xs">
-            Manage your bank accounts, mobile wallets, and cash reserves in PKR.
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
+            Accounts
+          </h1>
+          <p className="text-muted mt-0.5 text-[12.5px]">
+            Every place you hold money — banks, mobile wallets and cash in hand.
           </p>
         </div>
-        <Button
-          variant="primary"
-          onClick={() => setAddModalOpen(true)}
-          className="flex items-center gap-1.5 self-start sm:self-auto"
-        >
-          <Plus size={16} />
-          <span>Add Account</span>
-        </Button>
+
+        <PageActions
+          title="Accounts"
+          actions={[
+            {
+              label: "Add account",
+              hint: "A bank or mobile wallet you hold money with",
+              icon: Plus,
+              tone: "primary",
+              onClick: () => setAddModalOpen(true),
+            },
+          ]}
+        />
       </div>
 
       {/* Net Balance Overview Card */}
@@ -220,8 +222,7 @@ export default function AccountsPage() {
                     key={account.id}
                     account={account}
                     onEdit={() => setEditingAccount(account)}
-                    onToggleActive={() => handleToggleActive(account)}
-                    onDelete={() => openDelete(account)}
+                    onToggleActive={() => openToggle(account)}
                   />
                 ))}
               </div>
@@ -244,8 +245,7 @@ export default function AccountsPage() {
                     key={account.id}
                     account={account}
                     onEdit={() => setEditingAccount(account)}
-                    onToggleActive={() => handleToggleActive(account)}
-                    onDelete={() => openDelete(account)}
+                    onToggleActive={() => openToggle(account)}
                   />
                 ))}
               </div>
@@ -268,8 +268,7 @@ export default function AccountsPage() {
                     key={account.id}
                     account={account}
                     onEdit={() => setEditingAccount(account)}
-                    onToggleActive={() => handleToggleActive(account)}
-                    onDelete={() => openDelete(account)}
+                    onToggleActive={() => openToggle(account)}
                   />
                 ))}
               </div>
@@ -286,13 +285,81 @@ export default function AccountsPage() {
         onSuccess={() => setRefreshKey((k) => k + 1)}
       />
 
-      <DeleteAccountModal
-        isOpen={deletingAccount !== null}
-        onClose={() => setDeletingAccount(null)}
-        onConfirm={handleDelete}
-        account={deletingAccount}
-        movementCount={deletingCount}
-        busy={busy}
+      <ConfirmActionModal
+        isOpen={togglingAccount !== null}
+        onClose={() => setTogglingAccount(null)}
+        onConfirm={handleToggleActive}
+        title={
+          togglingAccount?.is_archived ? "Reactivate this account?" : "Deactivate this account?"
+        }
+        subtitle={
+          togglingAccount?.is_archived
+            ? "It becomes usable again everywhere"
+            : "Reversible — nothing is deleted"
+        }
+        icon={togglingAccount?.is_archived ? <Power size={16} /> : <PowerOff size={16} />}
+        tone={togglingAccount?.is_archived ? "neutral" : "warn"}
+        confirmLabel={togglingAccount?.is_archived ? "Reactivate" : "Deactivate"}
+        headline={
+          togglingAccount && (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-foreground truncate text-[13px] font-semibold">
+                  {togglingAccount.name}
+                </p>
+                <p className="text-muted mt-0.5 text-[11px]">
+                  {togglingAccount.institutions?.short_name ??
+                    togglingAccount.institutions?.name ??
+                    "Cash in hand"}
+                  {" · "}
+                  {togglingCount === null
+                    ? "counting movements…"
+                    : `${togglingCount} movement${togglingCount === 1 ? "" : "s"}`}
+                </p>
+              </div>
+              <span className="tnum font-display shrink-0 text-[15px] font-semibold">
+                {formatPKR(Number(togglingAccount.balance_paisa))}
+              </span>
+            </div>
+          )
+        }
+        points={
+          togglingAccount?.is_archived
+            ? [
+                {
+                  icon: <Wallet2 size={14} />,
+                  label: "Its balance counts toward your household total again.",
+                  detail: "The figure at the top of this page goes back up by it.",
+                },
+                {
+                  icon: <ShieldCheck size={14} />,
+                  label: "It becomes selectable when logging entries and transfers.",
+                  detail: "Any lock it had is unaffected — that is a separate switch.",
+                },
+              ]
+            : [
+                {
+                  icon: <EyeOff size={14} />,
+                  label: "It disappears from every account picker.",
+                  detail:
+                    "Shown greyed with a “Deactivated” tag rather than hidden, so you can still see why it is unavailable.",
+                },
+                {
+                  icon: <Wallet2 size={14} />,
+                  label: "Its balance stops counting toward your household total.",
+                  detail:
+                    togglingAccount && Number(togglingAccount.balance_paisa) !== 0
+                      ? `The figure at the top of this page drops by ${formatPKR(Number(togglingAccount.balance_paisa))}.`
+                      : "The account is empty, so the total does not move.",
+                },
+                {
+                  icon: <History size={14} />,
+                  label: "Every past entry and transaction stays exactly as it is.",
+                  detail:
+                    "Nothing is deleted and no total is rewritten. You can switch it back on at any time.",
+                },
+              ]
+        }
       />
 
       <EditAccountModal
@@ -309,23 +376,19 @@ function AccountCard({
   account,
   onEdit,
   onToggleActive,
-  onDelete,
 }: {
   account: AccountWithInstitution;
   onEdit?: () => void;
   onToggleActive?: () => void;
-  onDelete?: () => void;
 }) {
   const inst = account.institutions;
-  const logoPath = inst?.logo_path;
-  const brandColor = inst?.brand_color || "#0B1A33";
 
   return (
     // `group` drives the hover reveal in RowActions. Card surfaces reveal on hover
     // and :focus-within; detail pages show the actions always.
     <div
       className={cn(
-        "group bg-surface border-border rounded-panel border p-5 shadow-sm hover:shadow-md transition-all flex flex-col justify-between",
+        "group lift bg-surface border-border rounded-panel border p-5 shadow-sm flex flex-col justify-between",
         // Deactivated reads as switched off rather than missing.
         account.is_archived && "opacity-60",
       )}
@@ -333,20 +396,20 @@ function AccountCard({
       <div>
         <div className="flex items-center justify-between gap-3 mb-3">
           <div className="flex items-center gap-2.5">
-            {logoPath ? (
-              <img
-                src={logoPath}
-                alt={inst?.name || account.name}
-                className="w-8 h-8 rounded-full object-contain bg-surface border border-border p-1"
-              />
-            ) : (
-              <div
-                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold"
-                style={{ backgroundColor: brandColor }}
-              >
-                {account.name.slice(0, 2).toUpperCase()}
-              </div>
-            )}
+            {/*
+              MerchantMark, not a bare <img>: `logo_path` is a bare filename for
+              most rows and needs institutionLogo() to resolve, and the eleven
+              institutions whose file turned out to be another company's mark are
+              null — those must render the visible "awaiting logo" placeholder
+              rather than a monogram passing itself off as the brand.
+            */}
+            <MerchantMark
+              name={inst?.short_name ?? account.name}
+              brand={inst?.brand_color ?? "#16233a"}
+              logo={institutionLogo(inst?.logo_path) ?? undefined}
+              awaitingLogo={Boolean(inst && !inst.logo_path)}
+              size={32}
+            />
             <div>
               <h3 className="font-display text-sm font-semibold line-clamp-1">{account.name}</h3>
               <p className="text-muted text-[11px]">
@@ -356,7 +419,22 @@ function AccountCard({
             </div>
           </div>
 
+          {/*
+            Actions sit BEFORE the status chip, so the chip keeps the right edge.
+            The other way round the badge slid left every time a card was hovered
+            and the whole row of cards jittered as the pointer crossed them.
+
+            Delete is deliberately NOT here. It is permanent and it lives one
+            level deeper, on the account's own page, next to the ledger it would
+            put a "Deleted account" tag on.
+          */}
           <div className="flex shrink-0 items-center gap-1.5">
+            <RowActions
+              onEdit={onEdit}
+              onToggleActive={onToggleActive}
+              isActive={!account.is_archived}
+              editLabel="Edit account"
+            />
             {account.is_archived ? (
               <span className="bg-surface-subtle text-muted border-border inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium">
                 <PowerOff size={10} />
@@ -372,14 +450,6 @@ function AccountCard({
                 {ACCOUNT_TYPE_LABEL[account.type] ?? account.type}
               </span>
             )}
-            <RowActions
-              onEdit={onEdit}
-              onToggleActive={onToggleActive}
-              isActive={!account.is_archived}
-              onDelete={onDelete}
-              editLabel="Edit account"
-              deleteLabel="Delete account"
-            />
           </div>
         </div>
 

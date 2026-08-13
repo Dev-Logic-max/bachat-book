@@ -7,11 +7,16 @@ import {
   ArrowLeft,
   ArrowDownRight,
   ArrowUpRight,
+  EyeOff,
+  History,
   Landmark,
   Lock,
+  Power,
   PowerOff,
   Search,
+  ShieldCheck,
   Trash2,
+  Wallet2,
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
@@ -20,9 +25,16 @@ import { RowActions, LinkBadge } from "@/components/ui/row-actions";
 import { TransactionDrawer } from "@/components/transaction-drawer";
 import { EditAccountModal } from "@/components/edit-account-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
+import { ConfirmActionModal } from "@/components/confirm-action-modal";
+import { DeleteAccountModal } from "@/components/delete-account-modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
-import { deleteMovement, deleteTransfer } from "@/lib/ledger-actions";
+import {
+  deleteAccount,
+  deleteMovement,
+  deleteTransfer,
+  setAccountActive,
+} from "@/lib/ledger-actions";
 import { ACCOUNT_TYPE_LABEL, PAYMENT_METHOD_LABEL } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 import type { Tables } from "@/lib/supabase/types";
@@ -59,6 +71,10 @@ export default function AccountDetailPage() {
   const [deletingTx, setDeletingTx] = React.useState<TransactionWithRelations | null>(
     null,
   );
+  const [toggleOpen, setToggleOpen] = React.useState(false);
+  const [deleteAccountOpen, setDeleteAccountOpen] = React.useState(false);
+  const [movementCount, setMovementCount] = React.useState<number | null>(null);
+  const [accountBusy, setAccountBusy] = React.useState(false);
 
   const reload = () => setRefreshKey((k) => k + 1);
 
@@ -98,6 +114,58 @@ export default function AccountDetailPage() {
 
   // No lookup needed any more — the row carries everything the dialog names.
   const openDelete = (tx: TransactionWithRelations) => setDeletingTx(tx);
+
+  const openDeleteAccount = () => {
+    // The count already loaded with the page; no second round trip.
+    setMovementCount(transactions.length);
+    setDeleteAccountOpen(true);
+  };
+
+  const handleToggleAccount = async () => {
+    if (!account) return;
+    try {
+      await setAccountActive(supabase, account.id, account.is_archived);
+      showToast({
+        type: "success",
+        title: account.is_archived ? "Account reactivated" : "Account deactivated",
+        description: account.is_archived
+          ? `"${account.name}" can be used again.`
+          : `"${account.name}" is hidden from every picker. Its records are kept.`,
+      });
+      setToggleOpen(false);
+      reload();
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not change the account",
+        description: err instanceof Error ? err.message : "Unknown error.",
+      });
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!account) return;
+    setAccountBusy(true);
+    try {
+      await deleteAccount(supabase, account.id);
+      showToast({
+        type: "success",
+        title: "Account deleted",
+        description: `Its past records are kept and now show a "Deleted account" tag.`,
+      });
+      setDeleteAccountOpen(false);
+      // Back to the wall — this account is no longer listed there.
+      router.push("/accounts");
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not delete the account",
+        description: err instanceof Error ? err.message : "Unknown error.",
+      });
+    } finally {
+      setAccountBusy(false);
+    }
+  };
 
   const handleDeleteTx = async () => {
     if (!deletingTx) return;
@@ -186,8 +254,15 @@ export default function AccountDetailPage() {
 
   return (
     <div className="space-y-6">
-      {/* Back Button */}
-      <div>
+      {/*
+        Back link and the account's own actions share one row.
+
+        This is where DELETE lives, and the only place it does. On the accounts
+        wall a card offers edit and deactivate only: a permanent, irreversible
+        action reached from a hover menu on a grid of nine cards is one misclick
+        from gone. Here it sits beside the ledger it would tag as deleted.
+      */}
+      <div className="flex items-center justify-between gap-3">
         <Link
           href="/accounts"
           className="text-muted hover:text-foreground text-xs font-semibold inline-flex items-center gap-1.5 transition-colors"
@@ -195,6 +270,17 @@ export default function AccountDetailPage() {
           <ArrowLeft size={14} />
           <span>Back to Accounts</span>
         </Link>
+
+        <RowActions
+          reveal="always"
+          onEdit={() => setEditAccountOpen(true)}
+          editLabel="Edit account"
+          onToggleActive={account.deleted_at ? undefined : () => setToggleOpen(true)}
+          isActive={!account.is_archived}
+          // A tombstoned account has nothing left to delete.
+          onDelete={account.deleted_at ? undefined : openDeleteAccount}
+          deleteLabel="Delete account"
+        />
       </div>
 
       {/* Account Hero Card */}
@@ -252,21 +338,14 @@ export default function AccountDetailPage() {
           </div>
         </div>
 
-        <div className="border-border flex items-center gap-5 border-t pt-4 md:border-t-0 md:pt-0">
-          <div className="md:text-right">
-            <span className="text-muted block text-[11px] uppercase tracking-wider">
-              Current Ledger Balance
-            </span>
-            <div className="font-display tnum mt-0.5 text-2xl font-bold text-foreground">
-              {formatPKR(Number(account.balance_paisa))}
-            </div>
+        {/* Actions moved up to the back-link row; this stays a clean figure. */}
+        <div className="border-border border-t pt-4 md:border-t-0 md:pt-0 md:text-right">
+          <span className="text-muted block text-[11px] uppercase tracking-wider">
+            Current Ledger Balance
+          </span>
+          <div className="font-display tnum mt-0.5 text-2xl font-bold text-foreground">
+            {formatPKR(Number(account.balance_paisa))}
           </div>
-          {/* Detail pages show actions always, never on hover. */}
-          <RowActions
-            reveal="always"
-            onEdit={() => setEditAccountOpen(true)}
-            editLabel="Edit account"
-          />
         </div>
       </div>
 
@@ -414,6 +493,85 @@ export default function AccountDetailPage() {
         onClose={() => setEditAccountOpen(false)}
         account={account}
         onSuccess={reload}
+      />
+
+      <ConfirmActionModal
+        isOpen={toggleOpen}
+        onClose={() => setToggleOpen(false)}
+        onConfirm={handleToggleAccount}
+        title={account.is_archived ? "Reactivate this account?" : "Deactivate this account?"}
+        subtitle={
+          account.is_archived
+            ? "It becomes usable again everywhere"
+            : "Reversible — nothing is deleted"
+        }
+        icon={account.is_archived ? <Power size={16} /> : <PowerOff size={16} />}
+        tone={account.is_archived ? "neutral" : "warn"}
+        confirmLabel={account.is_archived ? "Reactivate" : "Deactivate"}
+        headline={
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-foreground truncate text-[13px] font-semibold">
+                {account.name}
+              </p>
+              <p className="text-muted mt-0.5 text-[11px]">
+                {inst?.short_name ?? inst?.name ?? "Cash in hand"}
+                {" · "}
+                <span className="tnum">{transactions.length}</span>{" "}
+                {transactions.length === 1 ? "movement" : "movements"}
+              </p>
+            </div>
+            <span className="tnum font-display shrink-0 text-[15px] font-semibold">
+              {formatPKR(Number(account.balance_paisa))}
+            </span>
+          </div>
+        }
+        points={
+          account.is_archived
+            ? [
+                {
+                  icon: <Wallet2 size={14} />,
+                  label: "Its balance counts toward your household total again.",
+                  detail: "The figure on the Accounts page goes back up by it.",
+                },
+                {
+                  icon: <ShieldCheck size={14} />,
+                  label: "It becomes selectable when logging entries and transfers.",
+                  detail: "Any lock it had is unaffected — that is a separate switch.",
+                },
+              ]
+            : [
+                {
+                  icon: <EyeOff size={14} />,
+                  label: "It disappears from every account picker.",
+                  detail:
+                    "Shown greyed with a “Deactivated” tag rather than hidden, so you can still see why it is unavailable.",
+                },
+                {
+                  icon: <Wallet2 size={14} />,
+                  label: "Its balance stops counting toward your household total.",
+                  detail:
+                    Number(account.balance_paisa) !== 0
+                      ? `Your total drops by ${formatPKR(Number(account.balance_paisa))}.`
+                      : "The account is empty, so the total does not move.",
+                },
+                {
+                  icon: <History size={14} />,
+                  label: "Every past entry and transaction stays exactly as it is.",
+                  detail:
+                    "Nothing is deleted and no total is rewritten. You can switch it back on at any time.",
+                },
+              ]
+        }
+      />
+
+      <DeleteAccountModal
+        isOpen={deleteAccountOpen}
+        onClose={() => setDeleteAccountOpen(false)}
+        onConfirm={handleDeleteAccount}
+        account={account}
+        movementCount={movementCount}
+        busy={accountBusy}
       />
 
       <ConfirmDeleteModal

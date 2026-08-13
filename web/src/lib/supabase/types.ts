@@ -33,6 +33,26 @@ export type PaymentMethod =
 export type EventType = "general" | "bill" | "salary" | "committee" | "tax" | "holiday" | "birthday";
 export type TaskPriority = "low" | "medium" | "high";
 export type TaskStatus = "todo" | "in_progress" | "done";
+/** Which way a paid task moves money. Mirrors the entry form's two buttons. */
+export type MovementDirection = "expense" | "income";
+export type TaskRepeatRule = "none" | "daily" | "weekly" | "monthly" | "yearly";
+/**
+ * What an institution IS, for grouping the catalogue.
+ *
+ * Separate from `kind`, which is what it CAN DO — `bank` and `wallet` are the
+ * two kinds you can hold an account with, and that axis drives the Add Account
+ * picker. Splitting `kind` for presentation would mean every behavioural map
+ * grows a branch, and one missed branch silently drops an institution.
+ */
+export type InstitutionSector =
+  | "retail_bank"
+  | "mobile_wallet"
+  | "telecom"
+  | "electricity"
+  | "gas"
+  | "water"
+  | "government"
+  | "other";
 
 export type Database = {
   public: {
@@ -449,6 +469,23 @@ export type Database = {
           estimated_minutes: number | null;
           category: string | null;
           auto: boolean;
+          /* A task that MOVES MONEY. Completing it writes a real ledger entry. */
+          is_paid: boolean;
+          /* UNSIGNED magnitude, like the entry form; the sign lives in
+             `direction`. transactions.amount_paisa is the signed one. */
+          amount_paisa: number | null;
+          direction: MovementDirection | null;
+          account_id: string | null;
+          category_id: string | null;
+          /* The ledger row this task created. Two-way synced by trigger. */
+          settled_transaction_id: string | null;
+          completed_at: string | null;
+          repeat_rule: TaskRepeatRule;
+          /* Days before the due date the next occurrence appears. Null = the
+             minimum for this priority — see task_lead_days() in the DB. */
+          repeat_lead_days: number | null;
+          /* Groups every occurrence of one recurring task. */
+          series_id: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -467,6 +504,16 @@ export type Database = {
           estimated_minutes?: number | null;
           category?: string | null;
           auto?: boolean;
+          is_paid?: boolean;
+          amount_paisa?: number | null;
+          direction?: MovementDirection | null;
+          account_id?: string | null;
+          category_id?: string | null;
+          settled_transaction_id?: string | null;
+          completed_at?: string | null;
+          repeat_rule?: TaskRepeatRule;
+          repeat_lead_days?: number | null;
+          series_id?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -591,6 +638,8 @@ export type Database = {
           name: string;
           short_name: string;
           kind: "bank" | "wallet" | "utility" | "gov";
+          /** Display grouping only — see InstitutionSector. */
+          sector: InstitutionSector | null;
           brand_color: string;
           on_brand_color: string;
           logo_path: string | null;
@@ -601,6 +650,7 @@ export type Database = {
           name: string;
           short_name: string;
           kind: "bank" | "wallet" | "utility" | "gov";
+          sector?: InstitutionSector | null;
           brand_color?: string;
           on_brand_color?: string;
           logo_path?: string | null;

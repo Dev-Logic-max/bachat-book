@@ -22,6 +22,36 @@ phase order, the plan tiers and the seed spec.
 
 ---
 
+## Commits
+
+**One subject line, then 2–3 lines of plain explanation.** Not a bare subject,
+not an essay. Say what changed and why in everyday words, and stop.
+
+Use ordinary language — "fix", not "rectify"; "remove", not "retire". Leave out
+the file list, the test results, and anything the diff already shows.
+
+```
+Fix account balance not updating after edit
+
+Changing an entry's account did nothing because the update never wrote
+account_id, so the money stayed in the old account. It now follows the entry.
+```
+
+```
+Use one table for entries and transactions
+
+Entries and transactions stored the same movement twice and drifted apart.
+They are now two views of one table, so there is nothing left to keep in sync.
+```
+
+Do not commit a doc-only change on its own — leave it in the working tree and
+let it ride along with the next real commit.
+
+**Never add a `Co-Authored-By:` trailer, or any other attribution line, to any
+commit or PR.**
+
+---
+
 ## Running
 
 ```powershell
@@ -112,6 +142,13 @@ Loading states are **layout-shaped skeletons**, never spinners. See
 - **Unavailable accounts are SHOWN in pickers, greyed with a reason chip — never hidden.** An account that vanishes from the expense list reads as data loss and sends you hunting for it. `accountBlockedReason()` returns the label; the direction matters, because a lock only bites on the way out.
 - **The institution is identity, not a field.** It sits in a read-only band at the top of Edit Account with the logo and the date added. Repointing an account at a different bank while its transactions stay put would silently relabel every one of them.
 - **An account is somewhere you HOLD money.** The Add Account picker lists banks and mobile wallets only; LESCO, PTCL, K-Electric, Jazz, FBR are merchants you pay, not places you hold a balance. `credit` and `investment` were dropped as account types — a card is a liability and the page sums every balance into one liquidity figure, and NSS/PSX belong to Wealth. Account type follows the institution: none→cash, bank→current/savings, wallet→wallet.
+- **A PostgREST embed must NAME its foreign key when two exist.** `transactions` reaches `accounts` through `account_id` AND `transfer_account_id`, so `select("*, accounts(*)")` is ambiguous: PostgREST answers `300 / PGRST201` and returns NO rows. The Transactions page rendered "No Transactions Found" for every household because of it — the query never checked `error`, so a real failure wore the empty state's clothes. Use `accounts!transactions_account_id_fkey(*)`, embed the second key under an alias (`transfer_account:accounts!transactions_transfer_account_id_fkey(*)`), and **always surface `error` separately from "no rows"**.
+- **Recurrence lead time must be capped at one period.** A repeating task generates its next turn N days before it is due — 3/4/5 by priority, so the task always exists before its own first reminder. Applied literally that breaks short periods: a DAILY task with a 3-day lead spawns tomorrow's copy and the day after's while today's is still open. `task_lead_days()` clamps the lead to `period − 1`, which guarantees at most one live occurrence per series; daily lands on 0. A daily task is also forced to low priority by `tasks_daily_is_low_priority`.
+- **Generation is calendar-driven, completion is not.** Next month's bill arrives whether or not this month's was paid, so completing a task must never pull the next one forward, and an unpaid one stays on the board flagged overdue rather than being replaced.
+- **Modal is a STACK.** Modals nest (Manage categories over a half-filled Add Expense). Without the module-level `MODAL_STACK`, Escape reached every open dialog at once and threw away the form behind, and the inner dialog's cleanup ran `overflow: unset` while the outer was still open, so the page scrolled behind a modal. Only the topmost dialog answers Escape; scroll is restored only when the stack empties.
+- **A shared grid template must not carry `display`.** `ENTRY_COLS` / `TX_COLS` hold column tracks ONLY. A template with `grid` baked in, used by a header that needs `hidden lg:grid`, resolves on Tailwind's stylesheet order rather than on intent — the header either never hides or never shows. Each consumer states its own display.
+- **The admin console never loads money.** It showed "Managed Volume (PKR)" summed across every household — a platform role reading every family's real balances. RLS permits it; that is not a reason to render it. Counts, plans and statuses only.
+- **`institutions.kind` is behaviour, `sector` is presentation.** `kind` decides what can hold an account (`bank`/`wallet`) and drives `TYPES_BY_KIND` and `ACCOUNT_INSTITUTION_KINDS`. Splitting `kind` to get a tidier catalogue means every one of those maps grows a branch, and one missed branch silently drops an institution out of Add Account. Group the catalogue by `sector` instead.
 - **A logo file being present does not mean it is the right logo.** Eleven `institutions.logo_path` entries pointed at another company's mark entirely (Easypaisa was a teal heart, SSGC a house outline). They are now `null` and render `MerchantMark`'s `awaitingLogo` placeholder — brand colour, dashed ring, "no image" glyph — so the gap is visible rather than quietly wrong. Look at a mark before wiring it up; do not trust the filename.
 
 ---

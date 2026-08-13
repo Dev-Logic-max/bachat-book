@@ -78,7 +78,7 @@ export function NetWorthHero({
   const domain: [number, number] = [min - spread * 1.9, max + spread * 0.22];
 
   return (
-    <section className="pb-[68px]">
+    <section className="pb-17">
       <div className="bg-navy-900 relative overflow-hidden rounded-modal">
         {/* The chart bleeds to the band's own edges — it is the imagery. */}
         {hasSeries ? (
@@ -248,15 +248,17 @@ export function NetWorthHero({
             </>
           );
 
+          /*
+            A hairline border is added here even though these cards float on
+            shadow alone: `lift` warms it to brass on hover, and a card with no
+            border to warm would have nothing to say on hover but a shadow
+            change, which is invisible against the navy band behind it.
+          */
           const cardClass =
-            "bg-surface rounded-card px-5 py-4 shadow-md flex flex-col justify-between";
+            "lift bg-surface border-border rounded-card border px-5 py-4 shadow-md flex flex-col justify-between";
 
           return k.href ? (
-            <Link
-              key={k.label}
-              href={k.href}
-              className={cn(cardClass, "transition-shadow hover:shadow-lg")}
-            >
+            <Link key={k.label} href={k.href} className={cardClass}>
               {inner}
             </Link>
           ) : (

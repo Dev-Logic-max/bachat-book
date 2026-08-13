@@ -33,7 +33,9 @@ export function Panel({
   return (
     <section
       className={cn(
-        "bg-surface border-border rounded-panel border shadow-sm",
+        // `lift` warms the border to brass and raises the panel a pixel on
+        // hover — the same language as the KPI cards and the account wall.
+        "lift bg-surface border-border rounded-panel border shadow-sm",
         className,
       )}
     >

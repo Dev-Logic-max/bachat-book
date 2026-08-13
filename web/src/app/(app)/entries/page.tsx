@@ -1,26 +1,44 @@
 "use client";
 
 import * as React from "react";
-import { ArrowDownRight, ArrowUpRight, NotebookPen, Plus, Wallet } from "lucide-react";
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  ArrowLeftRight,
+  Landmark,
+  NotebookPen,
+  Plus,
+  Wallet,
+} from "lucide-react";
 import { useSession } from "@/components/session-provider";
-import { Panel, Rows } from "@/components/panels";
+import { Panel } from "@/components/panels";
 import { Reveal } from "@/components/reveal";
 import { EmptyState } from "@/components/empty-state";
-import { EntryRow } from "@/components/entry-row";
+import { EntryRow, EntryRowHeader } from "@/components/entry-row";
 import { QuickAddModal } from "@/components/quick-add-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { CategoryChip } from "@/components/category-icon";
+import { AccountBreakdown, buildSlices } from "@/components/account-breakdown";
+import { accountSelectOptions } from "@/components/account-options";
+import { PageActions } from "@/components/page-actions";
+import { FilterBar } from "@/components/filter-bar";
 import { RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { deleteMovement } from "@/lib/ledger-actions";
+import { institutionLogo, todayISO } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import type { EntryWithCategory } from "@/components/entry-row";
+import type { BreakdownSlice } from "@/components/account-breakdown";
+import type { EntryAccountRef, EntryWithCategory } from "@/components/entry-row";
 import type { QuickEntryDraft } from "@/components/quick-add-modal";
 import type { SelectOption } from "@/components/ui/select";
 import type { Tables } from "@/lib/supabase/types";
+
+type AccountWithInstitution = Tables<"accounts"> & {
+  institutions: Tables<"institutions"> | null;
+};
 
 type TypeFilter = "all" | "income" | "expense";
 
@@ -45,11 +63,19 @@ export default function EntriesPage() {
   const userId = session.user.id;
 
   const [entries, setEntries] = React.useState<EntryWithCategory[]>([]);
-  const [accounts, setAccounts] = React.useState<Tables<"accounts">[]>([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
 
-  const [month, setMonth] = React.useState("all");
+  /*
+   * THIS MONTH by default, not "all".
+   *
+   * "Logged in" across all of history is not a figure anyone budgets against —
+   * it only ever grows, so the four tiles at the top became bigger every month
+   * and stopped meaning anything. A month is the unit a household actually
+   * thinks in, and it is one click to widen.
+   */
+  const [month, setMonth] = React.useState(() => todayISO().slice(0, 7));
   const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
   const [categoryFilter, setCategoryFilter] = React.useState("all");
   const [accountFilter, setAccountFilter] = React.useState("all");
@@ -60,6 +86,18 @@ export default function EntriesPage() {
   const [deleting, setDeleting] = React.useState<EntryWithCategory | null>(null);
 
   const reload = () => setRefreshKey((k) => k + 1);
+
+  // How many filters are away from "everything". Drives the mobile badge.
+  const activeFilterCount = [month, typeFilter, categoryFilter, accountFilter].filter(
+    (v) => v !== "all",
+  ).length;
+
+  const clearFilters = () => {
+    setMonth("all");
+    setTypeFilter("all");
+    setCategoryFilter("all");
+    setAccountFilter("all");
+  };
 
   React.useEffect(() => {
     if (!householdId) return;
@@ -77,18 +115,23 @@ export default function EntriesPage() {
           .eq("is_opening", false)
           .order("date", { ascending: false })
           .order("created_at", { ascending: false }),
+        /*
+         * Deactivated accounts are LOADED, not filtered out. Past entries still
+         * point at them, and a row whose account resolved to nothing rendered as
+         * "Unknown" — the account did not vanish, it was switched off. What they
+         * are excluded from is `heldPaisa` below, which is a different question.
+         */
         supabase
           .from("accounts")
-          .select("*")
+          .select("*, institutions(*)")
           .eq("household_id", householdId)
-          .eq("is_archived", false)
           .is("deleted_at", null)
           .order("created_at"),
       ]);
 
       if (!active) return;
       if (entryRes.data) setEntries(entryRes.data as unknown as EntryWithCategory[]);
-      if (accRes.data) setAccounts(accRes.data);
+      if (accRes.data) setAccounts(accRes.data as unknown as AccountWithInstitution[]);
       setLoading(false);
     }
 
@@ -106,22 +149,38 @@ export default function EntriesPage() {
   // ---- Filters -------------------------------------------------------------
 
   const monthOptions: SelectOption[] = React.useMemo(() => {
+    const label = (key: string) =>
+      new Date(`${key}-01T00:00:00`).toLocaleDateString("en-GB", {
+        month: "long",
+        year: "numeric",
+      });
+
     const seen = new Map<string, string>();
+    /*
+     * The CURRENT month is always offered, even with nothing in it yet.
+     *
+     * The list is otherwise built from the entries themselves, so on the 1st of
+     * a month — or in a brand-new workspace — the default selection pointed at
+     * an option that did not exist and the control rendered its placeholder.
+     */
+    const current = todayISO().slice(0, 7);
+    seen.set(current, label(current));
+
     for (const e of entries) {
       const key = e.date.slice(0, 7);
-      if (!seen.has(key)) {
-        seen.set(
-          key,
-          new Date(`${key}-01T00:00:00`).toLocaleDateString("en-GB", {
-            month: "long",
-            year: "numeric",
-          }),
-        );
-      }
+      if (!seen.has(key)) seen.set(key, label(key));
     }
+
     return [
       { value: "all", label: "All months" },
-      ...[...seen.entries()].map(([value, label]) => ({ value, label })),
+      // Newest first — you look at this month far more often than 2024.
+      ...[...seen.entries()]
+        .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+        .map(([value, text]) => ({
+          value,
+          label: text,
+          description: value === current ? "This month" : undefined,
+        })),
     ];
   }, [entries]);
 
@@ -142,13 +201,47 @@ export default function EntriesPage() {
     ];
   }, [entries]);
 
+  /*
+   * A filter, so nothing is disabled and no direction is scored: a deactivated
+   * or locked account still has history worth reading. "All accounts" carries a
+   * bank glyph so the control reads as an account picker at a glance, the same
+   * way every other row in the list is led by a mark.
+   */
   const accountOptions: SelectOption[] = React.useMemo(
     () => [
-      { value: "all", label: "All accounts" },
-      ...accounts.map((a) => ({ value: a.id, label: a.name })),
+      {
+        value: "all",
+        label: "All accounts",
+        description: `${accounts.length} in this workspace`,
+        icon: <Landmark size={16} strokeWidth={1.7} />,
+      },
+      ...accountSelectOptions(accounts, { disableBlocked: false }),
     ],
     [accounts],
   );
+
+  /*
+   * How many days the chosen range covers.
+   *
+   * "August 2026" does not tell you whether you are looking at 13 days of
+   * spending or 31, which is exactly what you need before comparing the figure
+   * to last month. The current month counts to TODAY, not to the 31st — a
+   * month-to-date total measured against a full month is a false comparison.
+   */
+  const rangeDays = React.useMemo(() => {
+    const today = todayISO();
+    if (month === "all") {
+      if (entries.length === 0) return null;
+      // Entries are newest-first, so the last one is the earliest.
+      const earliest = entries[entries.length - 1].date;
+      return daysBetween(earliest, today) + 1;
+    }
+    const [y, m] = month.split("-").map(Number);
+    if (!y || !m) return null;
+    const isCurrent = month === today.slice(0, 7);
+    const lastDay = isCurrent ? Number(today.slice(8, 10)) : new Date(y, m, 0).getDate();
+    return lastDay;
+  }, [month, entries]);
 
   const filtered = React.useMemo(
     () =>
@@ -177,6 +270,63 @@ export default function EntriesPage() {
   }, [filtered]);
 
   /*
+   * The same three totals, split by account.
+   *
+   * "Rs 35,000 logged in" is a number; "Rs 25,000 into JazzCash, Rs 10,000 into
+   * cash" is an answer. Built from the FILTERED rows so the split always
+   * describes the figure printed above it — a breakdown of the unfiltered set
+   * sitting under a filtered total is two different numbers on one card.
+   */
+  const breakdowns = React.useMemo(() => {
+    const income = new Map<string, number>();
+    const expense = new Map<string, number>();
+    const net = new Map<string, number>();
+
+    for (const e of filtered) {
+      const amt = Number(e.amount_paisa);
+      const id = e.account_id;
+      if (amt >= 0) income.set(id, (income.get(id) ?? 0) + amt);
+      else expense.set(id, (expense.get(id) ?? 0) + Math.abs(amt));
+      net.set(id, (net.get(id) ?? 0) + amt);
+    }
+
+    return {
+      income: buildSlices(income, accounts),
+      expense: buildSlices(expense, accounts),
+      net: buildSlices(net, accounts),
+    };
+  }, [filtered, accounts]);
+
+  /** Balances as they stand — live accounts only, matching the Accounts page. */
+  const heldSlices: BreakdownSlice[] = React.useMemo(
+    () =>
+      buildSlices(
+        new Map(
+          accounts
+            .filter((a) => !a.is_archived)
+            .map((a) => [a.id, Number(a.balance_paisa)]),
+        ),
+        accounts,
+      ),
+    [accounts],
+  );
+
+  /** Account identity for a row, resolved once rather than per render. */
+  const accountRefById = React.useMemo(() => {
+    const map = new Map<string, EntryAccountRef>();
+    for (const a of accounts) {
+      map.set(a.id, {
+        name: a.name,
+        logo: institutionLogo(a.institutions?.logo_path),
+        brand: a.institutions?.brand_color ?? "#16233a",
+        awaitingLogo: Boolean(a.institutions && !a.institutions.logo_path),
+        deleted: Boolean(a.deleted_at),
+      });
+    }
+    return map;
+  }, [accounts]);
+
+  /*
    * What you actually hold, straight off the accounts.
    *
    * This replaces the old "Not linked, net" tile, which netted income against
@@ -185,9 +335,14 @@ export default function EntriesPage() {
    * this tile is the same number the Accounts page shows and the two screens
    * finally agree.
    */
-  const heldPaisa = React.useMemo(
-    () => accounts.reduce((sum, a) => sum + Number(a.balance_paisa), 0),
+  const liveAccounts = React.useMemo(
+    () => accounts.filter((a) => !a.is_archived),
     [accounts],
+  );
+
+  const heldPaisa = React.useMemo(
+    () => liveAccounts.reduce((sum, a) => sum + Number(a.balance_paisa), 0),
+    [liveAccounts],
   );
 
   const handleDelete = async () => {
@@ -213,7 +368,9 @@ export default function EntriesPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      {/* Never stacks: the 3-dot button belongs on the TITLE's row, which is the
+          whole reason the buttons collapse into it below lg. */}
+      <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
             Entries
@@ -224,30 +381,34 @@ export default function EntriesPage() {
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2.5">
-          <button
-            onClick={() => {
-              setAddType("expense");
-              setEditing(null);
-              setAddOpen(true);
-            }}
-            className="border-border bg-surface hover:bg-surface-subtle shadow-xs flex items-center gap-2 rounded-control border px-3.5 py-2 text-xs font-medium transition-colors"
-          >
-            <ArrowDownRight size={15} className="text-loss" />
-            Add expense
-          </button>
-          <button
-            onClick={() => {
-              setAddType("income");
-              setEditing(null);
-              setAddOpen(true);
-            }}
-            className="bg-navy-900 text-on-navy dark:bg-brass dark:text-navy-900 flex h-9 items-center gap-1.5 rounded-full px-4 text-[12.5px] font-medium transition-transform active:scale-95"
-          >
-            <Plus size={15} />
-            Add income
-          </button>
-        </div>
+        <PageActions
+          title="Entries"
+          actions={[
+            {
+              label: "Add expense",
+              hint: "Money out — defaults to cash",
+              icon: ArrowDownRight,
+              glyphClass: "text-loss",
+              onClick: () => {
+                setAddType("expense");
+                setEditing(null);
+                setAddOpen(true);
+              },
+            },
+            {
+              label: "Add income",
+              hint: "Money in — pick the account it landed in",
+              icon: Plus,
+              tone: "primary",
+              glyphClass: "text-gain",
+              onClick: () => {
+                setAddType("income");
+                setEditing(null);
+                setAddOpen(true);
+              },
+            },
+          ]}
+        />
       </header>
 
       <Reveal index={0}>
@@ -256,40 +417,83 @@ export default function EntriesPage() {
             label="Logged in"
             valuePaisa={totals.income}
             tone="gain"
+            icon={<ArrowUpRight size={13} />}
+            slices={breakdowns.income}
+            preposition="into"
             footnote={`${filtered.filter((e) => Number(e.amount_paisa) >= 0).length} entries`}
           />
           <StatCard
             label="Logged out"
             valuePaisa={totals.expense}
             tone="loss"
+            icon={<ArrowDownRight size={13} />}
+            slices={breakdowns.expense}
+            preposition="from"
             footnote={`${filtered.filter((e) => Number(e.amount_paisa) < 0).length} entries`}
           />
           <StatCard
             label="Net logged"
             valuePaisa={totals.net}
             tone={totals.net >= 0 ? "gain" : "loss"}
+            icon={<ArrowLeftRight size={13} />}
+            // Per account this is what each one actually GAINED or LOST over the
+            // range — in minus out — not the inflow repeated a second time.
+            slices={breakdowns.net}
+            preposition="net in"
             footnote="in minus out"
           />
           <StatCard
             label="Held now"
             valuePaisa={heldPaisa}
             tone="neutral"
-            footnote={`across ${accounts.length} account${accounts.length === 1 ? "" : "s"}`}
             icon={<Wallet size={13} />}
+            slices={heldSlices}
+            preposition="in"
+            footnote={`across ${liveAccounts.length} account${liveAccounts.length === 1 ? "" : "s"}`}
           />
         </div>
       </Reveal>
 
       <Reveal index={1}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <RichSelect value={month} onChange={setMonth} options={monthOptions} />
+        <FilterBar activeCount={activeFilterCount} onClear={clearFilters}>
+          <RichSelect
+            value={month}
+            onChange={setMonth}
+            options={monthOptions}
+            trailing={
+              rangeDays !== null ? (
+                <span className="bg-surface-subtle text-muted tnum shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold">
+                  {rangeDays}d
+                </span>
+              ) : undefined
+            }
+          />
           <RichSelect
             value={typeFilter}
             onChange={(v) => setTypeFilter(v as TypeFilter)}
             options={[
-              { value: "all", label: "Income and expense" },
-              { value: "income", label: "Income only", icon: <ArrowUpRight size={14} /> },
-              { value: "expense", label: "Expense only", icon: <ArrowDownRight size={14} /> },
+              {
+                value: "all",
+                label: "Income and expense",
+                // Both directions, both colours — the "no filter" state should
+                // look like the two states it contains, not like a third one.
+                icon: (
+                  <span className="flex items-center -space-x-1">
+                    <ArrowUpRight size={13} className="text-gain" />
+                    <ArrowDownRight size={13} className="text-loss" />
+                  </span>
+                ),
+              },
+              {
+                value: "income",
+                label: "Income only",
+                icon: <ArrowUpRight size={15} className="text-gain" />,
+              },
+              {
+                value: "expense",
+                label: "Expense only",
+                icon: <ArrowDownRight size={15} className="text-loss" />,
+              },
             ]}
           />
           <RichSelect
@@ -302,7 +506,7 @@ export default function EntriesPage() {
             onChange={setAccountFilter}
             options={accountOptions}
           />
-        </div>
+        </FilterBar>
       </Reveal>
 
       <Reveal index={2}>
@@ -344,12 +548,13 @@ export default function EntriesPage() {
               />
             </div>
           ) : (
-            <Rows>
+            <ul className="divide-border divide-y">
+              <EntryRowHeader />
               {filtered.map((entry) => (
                 <EntryRow
                   key={entry.id}
                   entry={entry}
-                  accountName={accountById.get(entry.account_id)?.name ?? null}
+                  account={accountRefById.get(entry.account_id) ?? null}
                   onEdit={() => {
                     const amt = Number(entry.amount_paisa);
                     setEditing({
@@ -366,7 +571,7 @@ export default function EntriesPage() {
                   onDelete={() => setDeleting(entry)}
                 />
               ))}
-            </Rows>
+            </ul>
           )}
         </Panel>
       </Reveal>
@@ -416,17 +621,33 @@ function StatCard({
   tone,
   footnote,
   icon,
+  slices = [],
+  preposition = "in",
 }: {
   label: string;
   valuePaisa: number;
   tone: "gain" | "loss" | "neutral";
   footnote: string;
   icon?: React.ReactNode;
+  /** The figure split across the accounts that produced it. */
+  slices?: BreakdownSlice[];
+  preposition?: string;
 }) {
   return (
-    <div className="bg-surface border-border rounded-card border p-5 shadow-xs">
+    // `lift` is the shared hover: a brass hairline and a deeper shadow. Brass
+    // never touches the shadow itself — a tinted shadow on cream reads as haze.
+    <div className="lift bg-surface border-border rounded-card border p-5 shadow-xs">
       <div className="text-muted flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wider">
-        {icon}
+        <span
+          className={cn(
+            "flex items-center",
+            tone === "gain" && "text-gain",
+            tone === "loss" && "text-loss",
+            tone === "neutral" && "text-brass-strong",
+          )}
+        >
+          {icon}
+        </span>
         {label}
       </div>
       <p
@@ -439,7 +660,25 @@ function StatCard({
       >
         {formatPKR(valuePaisa)}
       </p>
-      <p className="text-faint mt-0.5 text-[11px]">{footnote}</p>
+
+      {slices.length > 0 ? (
+        <AccountBreakdown slices={slices} preposition={preposition} />
+      ) : (
+        // A fixed-height placeholder, so a card with no split does not sit
+        // shorter than the three beside it.
+        <div className="mt-2 h-4.5" />
+      )}
+
+      <p className="text-faint mt-1.5 text-[11px]">{footnote}</p>
     </div>
   );
+}
+
+/** Whole days from one local ISO date to another. */
+function daysBetween(fromISO: string, toISO: string): number {
+  const [fy, fm, fd] = fromISO.split("-").map(Number);
+  const [ty, tm, td] = toISO.split("-").map(Number);
+  const from = new Date(fy, fm - 1, fd);
+  const to = new Date(ty, tm - 1, td);
+  return Math.max(0, Math.round((to.getTime() - from.getTime()) / 86_400_000));
 }

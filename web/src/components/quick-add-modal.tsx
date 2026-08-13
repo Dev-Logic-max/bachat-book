@@ -1,7 +1,9 @@
 "use client";
 
 import * as React from "react";
+import { Tags } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
+import { CategoriesModal } from "@/components/categories-modal";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -70,6 +72,7 @@ export function QuickAddModal({
   const [entryDate, setEntryDate] = React.useState(todayISO());
   const [accountId, setAccountId] = React.useState("");
   const [loading, setLoading] = React.useState(false);
+  const [categoriesOpen, setCategoriesOpen] = React.useState(false);
 
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
@@ -282,6 +285,7 @@ export function QuickAddModal({
     : 0;
 
   return (
+    <>
     <Modal
       isOpen={isOpen}
       onClose={onClose}
@@ -351,16 +355,33 @@ export function QuickAddModal({
           />
         </div>
 
-        <RichSelect
-          label="Category"
-          value={effectiveCategoryId}
-          onChange={setCategoryId}
-          options={categoryOptions}
-          placeholder={
-            categoryOptions.length === 0 ? "Loading categories…" : "Choose a category"
-          }
-          emptyMessage="No categories for this type"
-        />
+        {/*
+          The label row carries its own action. "Which categories exist?" comes
+          up mid-form, and the only answer used to be Settings → Categories,
+          which meant abandoning a part-filled entry to find out.
+        */}
+        <div className="space-y-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-foreground-2 text-xs font-medium">Category</span>
+            <button
+              type="button"
+              onClick={() => setCategoriesOpen(true)}
+              className="text-brass-strong hover:bg-brass-soft -me-1 flex items-center gap-1 rounded-control px-1.5 py-0.5 text-[11px] font-medium transition-colors"
+            >
+              <Tags size={11} />
+              Manage
+            </button>
+          </div>
+          <RichSelect
+            value={effectiveCategoryId}
+            onChange={setCategoryId}
+            options={categoryOptions}
+            placeholder={
+              categoryOptions.length === 0 ? "Loading categories…" : "Choose a category"
+            }
+            emptyMessage="No categories for this type"
+          />
+        </div>
 
         {/*
          * Required, not optional. There is no "standalone entry" any more — an
@@ -391,5 +412,18 @@ export function QuickAddModal({
         />
       </div>
     </Modal>
+
+    {/*
+      Sibling, not a child. Nested inside the body it would sit inside this
+      form's <form> element, and Modal keeps its own scroll lock and Escape
+      handling per dialog — see the stack in components/ui/modal.tsx.
+    */}
+    <CategoriesModal
+      isOpen={categoriesOpen}
+      onClose={() => setCategoriesOpen(false)}
+      categories={categories}
+      kind={type}
+    />
+    </>
   );
 }

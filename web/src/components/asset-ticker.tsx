@@ -3,6 +3,7 @@
 import * as React from "react";
 import { MerchantMark } from "@/components/merchant-mark";
 import { formatPKRCompact } from "@/lib/format";
+import { usePrefersReducedMotion } from "@/lib/use-reduced-motion";
 
 export type TickerAsset = {
   id: string;
@@ -63,7 +64,7 @@ export function AssetTicker({ assets }: { assets: TickerAsset[] }) {
   }
 
   return (
-    <div className="mt-3 flex h-[22px] items-center" aria-live="off">
+    <div className="mt-3 flex h-5.5 items-center" aria-live="off">
       {/* `key` remounts the row so the CSS keyframe replays on each rotation. */}
       <span key={asset.id + safeIndex} className="ticker-swap inline-flex">
         <AssetLine asset={asset} />
@@ -95,22 +96,3 @@ function AssetLine({ asset }: { asset: TickerAsset }) {
   );
 }
 
-/**
- * useSyncExternalStore rather than an effect: React Compiler bans synchronous
- * setState in useEffect, and this also gives a correct server snapshot (false).
- */
-function usePrefersReducedMotion(): boolean {
-  return React.useSyncExternalStore(subscribeReducedMotion, getReducedMotion, () => false);
-}
-
-function subscribeReducedMotion(onChange: () => void) {
-  if (typeof window === "undefined") return () => {};
-  const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
-  mq.addEventListener("change", onChange);
-  return () => mq.removeEventListener("change", onChange);
-}
-
-function getReducedMotion() {
-  if (typeof window === "undefined") return false;
-  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-}

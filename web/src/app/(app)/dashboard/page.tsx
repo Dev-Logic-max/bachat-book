@@ -17,16 +17,18 @@ import { Reveal } from "@/components/reveal";
 import { EmptyState } from "@/components/empty-state";
 import { EntryRow } from "@/components/entry-row";
 import { QuickAddModal } from "@/components/quick-add-modal";
-import { QuickTaskModal } from "@/components/quick-task-modal";
+// The full task form, not a cut-down one. A "quick" add that omitted subtasks,
+// payment and repeat taught you those fields did not exist.
+import { TaskFormModal } from "@/components/task-form-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { deleteMovement } from "@/lib/ledger-actions";
-import { monthBounds, netWorthSeries, rangePoints } from "@/lib/ledger";
+import { institutionLogo, monthBounds, netWorthSeries, rangePoints } from "@/lib/ledger";
 import { formatHijri, formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
-import type { EntryWithCategory } from "@/components/entry-row";
+import type { EntryAccountRef, EntryWithCategory } from "@/components/entry-row";
 import type { QuickEntryDraft } from "@/components/quick-add-modal";
 import type { TickerAsset } from "@/components/asset-ticker";
 import type { RangeKey } from "@/lib/ledger";
@@ -93,11 +95,15 @@ export default function DashboardPage() {
           .order("is_done", { ascending: true })
           .order("due_date", { ascending: true })
           .limit(6),
+        /*
+         * Deactivated accounts are loaded so their past entries can still name
+         * them; `liveAccounts` below is what net worth and the ticker use. Filtered
+         * out here, every row pointing at a switched-off account read "Unknown".
+         */
         supabase
           .from("accounts")
           .select("*, institutions(*)")
           .eq("household_id", householdId)
-          .eq("is_archived", false)
           .is("deleted_at", null)
           .order("balance_paisa", { ascending: false }),
         supabase
@@ -133,9 +139,14 @@ export default function DashboardPage() {
    * It used to be summed from quick_entries, which is why every account balance
    * was invisible on this page and why "Net Saved" was identical to net worth.
    */
-  const netWorthPaisa = React.useMemo(
-    () => accounts.reduce((sum, a) => sum + Number(a.balance_paisa), 0),
+  const liveAccounts = React.useMemo(
+    () => accounts.filter((a) => !a.is_archived),
     [accounts],
+  );
+
+  const netWorthPaisa = React.useMemo(
+    () => liveAccounts.reduce((sum, a) => sum + Number(a.balance_paisa), 0),
+    [liveAccounts],
   );
 
   const { from: monthFrom, to: monthTo } = React.useMemo(() => monthBounds(), []);
@@ -196,7 +207,7 @@ export default function DashboardPage() {
 
   const assets: TickerAsset[] = React.useMemo(
     () =>
-      accounts
+      liveAccounts
         .filter((a) => Number(a.balance_paisa) !== 0)
         .map((a) => ({
           id: a.id,
@@ -205,16 +216,31 @@ export default function DashboardPage() {
           logoPath: a.institutions?.logo_path ?? null,
           brandColor: a.institutions?.brand_color ?? null,
         })),
-    [accounts],
+    [liveAccounts],
   );
 
-  const accountNames = React.useMemo(
-    () => new Map(accounts.map((a) => [a.id, a.name])),
-    [accounts],
-  );
-  // Every entry names its account directly now — no lookup through a link.
+  /*
+   * Account identity per row — mark, brand and name. The row used to take a bare
+   * name and render it behind a chain icon, which said "linked": a fact that is
+   * true of every row now and therefore tells you nothing. The bank's own mark
+   * identifies where the money moved instead.
+   */
+  const accountRefById = React.useMemo(() => {
+    const map = new Map<string, EntryAccountRef>();
+    for (const a of accounts) {
+      map.set(a.id, {
+        name: a.name,
+        logo: institutionLogo(a.institutions?.logo_path),
+        brand: a.institutions?.brand_color ?? "#16233a",
+        awaitingLogo: Boolean(a.institutions && !a.institutions.logo_path),
+        deleted: Boolean(a.deleted_at),
+      });
+    }
+    return map;
+  }, [accounts]);
+
   const entryAccountName = (entry: EntryWithCategory): string | null =>
-    accountNames.get(entry.account_id) ?? null;
+    accountRefById.get(entry.account_id)?.name ?? null;
 
   const recentEntries = entries.slice(0, 8);
 
@@ -427,7 +453,7 @@ export default function DashboardPage() {
                   <EntryRow
                     key={entry.id}
                     entry={entry}
-                    accountName={entryAccountName(entry)}
+                    account={accountRefById.get(entry.account_id) ?? null}
                     onEdit={() => {
                       const amt = Number(entry.amount_paisa);
                       setEditingEntry({
@@ -525,7 +551,7 @@ export default function DashboardPage() {
         onSuccess={reload}
       />
 
-      <QuickTaskModal
+      <TaskFormModal
         isOpen={taskModalOpen}
         onClose={() => setTaskModalOpen(false)}
         householdId={householdId}

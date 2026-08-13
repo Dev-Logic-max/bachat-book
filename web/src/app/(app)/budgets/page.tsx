@@ -4,6 +4,7 @@ import * as React from "react";
 import { Plus, CircleDollarSign, AlertTriangle, CheckCircle2, TrendingUp } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
+import { PageActions } from "@/components/page-actions";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
@@ -120,18 +121,28 @@ export default function BudgetsPage() {
   return (
     <div className="space-y-6">
       {/* Top Banner */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Category Envelope Budgets</h1>
-          <p className="text-muted text-xs">
-            Set monthly spending limits for household categories with automatic warning alerts.
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
+            Budgets
+          </h1>
+          <p className="text-muted mt-0.5 text-[12.5px]">
+            Monthly spending limits per category, with a warning before you cross one.
           </p>
         </div>
 
-        <Button variant="primary" onClick={() => setAddModalOpen(true)} className="flex items-center gap-1.5 self-start sm:self-auto">
-          <Plus size={16} />
-          <span>Set Budget</span>
-        </Button>
+        <PageActions
+          title="Budgets"
+          actions={[
+            {
+              label: "Set budget",
+              hint: "Cap what one category can take in a month",
+              icon: Plus,
+              tone: "primary",
+              onClick: () => setAddModalOpen(true),
+            },
+          ]}
+        />
       </div>
 
       {/* Summary Cards */}

@@ -14,6 +14,8 @@ import {
   ListChecks,
   LogOut,
   NotebookPen,
+  PanelLeftClose,
+  PanelLeftOpen,
   PieChart,
   ScanLine,
   Settings,
@@ -29,14 +31,23 @@ import { Avatar } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/theme";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { formatName } from "@/lib/format";
+import { useRailCollapsed } from "@/lib/rail-state";
 
 import type { LucideIcon } from "lucide-react";
 import type { UserSession } from "@/lib/session";
 
+type RailItem = {
+  icon: LucideIcon;
+  label: string;
+  href: string;
+  soon?: boolean;
+};
+
 export function AppRail({ session }: { session?: UserSession | null }) {
   const pathname = usePathname();
+  const [collapsed, setCollapsed] = useRailCollapsed();
 
-/*
+  /*
    * Ordered by how often a rupee-a-day user actually touches each screen, not by
    * how the modules were built. Logging money comes first, planning second, the
    * once-a-month surfaces last.
@@ -45,19 +56,19 @@ export function AppRail({ session }: { session?: UserSession | null }) {
    * hiding it would make it impossible to keep testing — but the chip stops it
    * from reading as a working feature.
    */
-  const DAILY = [
+  const DAILY: RailItem[] = [
     { icon: LayoutDashboard, label: "Overview", href: "/dashboard" },
     { icon: NotebookPen, label: "Entries", href: "/entries" },
     { icon: Wallet, label: "Accounts", href: "/accounts" },
     { icon: ArrowLeftRight, label: "Transactions", href: "/transactions" },
   ];
 
-  const PLANNER = [
+  const PLANNER: RailItem[] = [
     { icon: ListChecks, label: "Tasks", href: "/tasks" },
     { icon: CalendarDays, label: "Calendar", href: "/calendar" },
   ];
 
-  const MONEY = [
+  const MONEY: RailItem[] = [
     { icon: CircleDollarSign, label: "Budgets", href: "/budgets" },
     { icon: TrendingUp, label: "Investments", href: "/wealth/investments" },
     { icon: Users, label: "Committee", href: "/wealth/committees" },
@@ -65,7 +76,7 @@ export function AppRail({ session }: { session?: UserSession | null }) {
     { icon: Contact, label: "Contacts", href: "/contacts" },
   ];
 
-  const TOOLS = [
+  const TOOLS: RailItem[] = [
     { icon: PieChart, label: "Reports", href: "/reports" },
     { icon: Landmark, label: "Tax & FBR", href: "/tax" },
     { icon: Bot, label: "AI Copilot", href: "/ai-assistant", soon: true },
@@ -78,7 +89,7 @@ export function AppRail({ session }: { session?: UserSession | null }) {
     { icon: ScanLine, label: "Receipts", href: "/receipts", soon: true },
   ];
 
-  const CLOSING = [
+  const CLOSING: RailItem[] = [
     { icon: ShieldCheck, label: "Admin Console", href: "/admin" },
     { icon: Settings, label: "Settings", href: "/settings" },
   ];
@@ -93,45 +104,80 @@ export function AppRail({ session }: { session?: UserSession | null }) {
   // Non-filer until the ATL says otherwise — the honest default in Pakistan.
   const isFiler = session?.preferences?.is_filer ?? false;
 
-  const renderGroup = (
-    label: string,
-    items: Array<{
-      icon: LucideIcon;
-      label: string;
-      href: string;
-      soon?: boolean;
-    }>,
-  ) => (
+  const renderGroup = (label: string, items: RailItem[]) => (
     <div>
-      <p className="text-on-navy-muted/70 px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em]">
-        {label}
-      </p>
+      {collapsed ? (
+        // The heading has nowhere to go at 72px. A hairline keeps the grouping
+        // legible without it; dropping both would make one 18-item list.
+        <div className="border-navy-700 mx-3 mb-2 border-t" />
+      ) : (
+        <p className="text-on-navy-muted/70 px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em]">
+          {label}
+        </p>
+      )}
+
       <ul className="space-y-0.5">
         {items.map((item) => {
           const isActive =
             pathname === item.href ||
             (item.href !== "/dashboard" && pathname.startsWith(item.href));
+
           return (
             <li key={item.label}>
               <Link
                 href={item.href}
+                // The label becomes the tooltip once it is no longer on screen.
+                title={collapsed ? `${item.label}${item.soon ? " — coming soon" : ""}` : undefined}
+                aria-current={isActive ? "page" : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded-control px-3 py-2 text-[13px] transition-colors",
+                  "group/nav relative flex items-center rounded-control text-[13px] transition-colors",
+                  collapsed ? "justify-center px-0 py-2.5" : "gap-3 px-3 py-2",
                   isActive
                     ? "bg-brass/12 text-on-navy font-medium"
-                    : "text-on-navy-muted hover:bg-white/5",
+                    : "text-on-navy-muted hover:bg-white/[0.07] hover:text-on-navy",
                 )}
               >
+                {/*
+                  Brass bar at the leading edge of the active row.
+
+                  The tint alone was doing all the work, and at 12% opacity on
+                  navy it is nearly invisible in dark mode, where the rail itself
+                  lifts rather than darkens. A hard edge reads at any brightness
+                  and survives being the only marker when the rail is collapsed.
+                */}
+                {isActive && (
+                  <span
+                    aria-hidden
+                    className="bg-brass absolute inset-y-1.5 inset-s-0 w-0.75 rounded-e-full"
+                  />
+                )}
+
                 <item.icon
                   size={16}
                   strokeWidth={1.75}
-                  className={isActive ? "text-brass" : ""}
+                  className={cn(
+                    "shrink-0 transition-colors",
+                    isActive ? "text-brass" : "group-hover/nav:text-on-navy",
+                  )}
                 />
-                <span className="min-w-0 flex-1 truncate">{item.label}</span>
-                {item.soon && (
-                  <span className="bg-white/10 text-on-navy-muted shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]">
-                    Soon
-                  </span>
+
+                {!collapsed && (
+                  <>
+                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    {item.soon && (
+                      <span className="bg-white/10 text-on-navy-muted shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]">
+                        Soon
+                      </span>
+                    )}
+                  </>
+                )}
+
+                {/* Collapsed: the chip has no room, so "unfinished" is a dot. */}
+                {collapsed && item.soon && (
+                  <span
+                    aria-hidden
+                    className="bg-brass/70 absolute right-2.5 top-2 size-1.5 rounded-full"
+                  />
                 )}
               </Link>
             </li>
@@ -147,31 +193,54 @@ export function AppRail({ session }: { session?: UserSession | null }) {
      * scrolls behind it and only the <nav> below scrolls internally. Without it
      * the whole rail scrolled away with the content, taking the sign-out button
      * and workspace switcher off screen.
+     *
+     * The content area is a `flex-1` <main> beside this, so narrowing the rail
+     * widens the page with no coordination between the two.
      */
-    <aside className="bg-navy-900 sticky top-0 hidden h-screen w-[248px] shrink-0 flex-col lg:flex">
+    <aside
+      className={cn(
+        "bg-navy-900 sticky top-0 hidden h-screen shrink-0 flex-col transition-[width] duration-200 ease-out lg:flex",
+        collapsed ? "w-18" : "w-62",
+      )}
+    >
       {/* Pinned header: brand + workspace switcher */}
-      <div className="shrink-0 px-4 pb-4 pt-6">
-        <div className="flex items-center gap-2.5 min-w-0 px-1">
+      <div className={cn("shrink-0 pb-4 pt-6", collapsed ? "px-3" : "px-4")}>
+        <div
+          className={cn(
+            "flex min-w-0 items-center",
+            collapsed ? "justify-center" : "gap-2.5 px-1",
+          )}
+        >
           <img
             src="/branding/logo.jpg"
             alt=""
-            className="w-8 h-8 rounded-[9px] object-cover shrink-0 shadow-xs border border-brass/40"
+            className="border-brass/40 shadow-xs size-8 shrink-0 rounded-[9px] border object-cover"
           />
-          <span className="text-on-navy font-display text-[15px] font-semibold tracking-tight truncate">
-            Bachat Book
-          </span>
+          {!collapsed && (
+            <span className="text-on-navy font-display truncate text-[15px] font-semibold tracking-tight">
+              Bachat Book
+            </span>
+          )}
         </div>
-        <div className="mt-3">
-          <WorkspaceSwitcher
-            currentName={householdName}
-            currentId={session?.household?.id ?? null}
-            currentKind={session?.household?.kind ?? null}
-          />
-        </div>
+
+        {!collapsed && (
+          <div className="mt-3">
+            <WorkspaceSwitcher
+              currentName={householdName}
+              currentId={session?.household?.id ?? null}
+              currentKind={session?.household?.kind ?? null}
+            />
+          </div>
+        )}
       </div>
 
       {/* The only scrolling region. Scrollbar hidden, still scrollable. */}
-      <nav className="scrollbar-none flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-2">
+      <nav
+        className={cn(
+          "scrollbar-none flex min-h-0 flex-1 flex-col overflow-y-auto py-2",
+          collapsed ? "gap-2 px-3" : "gap-5 px-4",
+        )}
+      >
         {renderGroup("Daily", DAILY)}
         {renderGroup("Planner", PLANNER)}
         {renderGroup("Wealth", MONEY)}
@@ -184,62 +253,102 @@ export function AppRail({ session }: { session?: UserSession | null }) {
        * state. The dashboard KPI row used to render it as "Rs 100", which is
        * what made that copy meaningless and why it was removed from there.
        */}
-      <div className="shrink-0 px-4 pt-3">
-        <div className="border-navy-700 rounded-card border p-3">
-          <div className="flex items-center justify-between">
-            <span className="text-on-navy-muted text-[11px]">FBR status</span>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                isFiler ? "bg-gain-soft text-gain" : "bg-surface-subtle text-muted",
-              )}
-            >
-              {isFiler ? "Filer" : "Non-filer"}
-            </span>
+      {!collapsed && (
+        <div className="shrink-0 px-4 pt-3">
+          <div className="border-navy-700 rounded-card border p-3">
+            <div className="flex items-center justify-between">
+              <span className="text-on-navy-muted text-[11px]">FBR status</span>
+              <span
+                className={cn(
+                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                  isFiler ? "bg-gain-soft text-gain" : "bg-surface-subtle text-muted",
+                )}
+              >
+                {isFiler ? "Filer" : "Non-filer"}
+              </span>
+            </div>
+            <p className="text-on-navy-muted mt-1.5 text-[11px] leading-snug">
+              {isFiler
+                ? "Active on ATL · Saved on tax withholding"
+                : "Tax rate applies on returns"}
+            </p>
           </div>
-          <p className="text-on-navy-muted mt-1.5 text-[11px] leading-snug">
-            {isFiler
-              ? "Active on ATL · Saved on tax withholding"
-              : "Tax rate applies on returns"}
-          </p>
         </div>
-      </div>
+      )}
 
-      {/* Pinned footer: profile + sign out */}
-      <div className="shrink-0 px-4 pb-6 pt-4">
-        <div className="border-navy-700 flex items-center justify-between gap-2 border-t px-1 pt-4">
+      {/* Pinned footer: collapse toggle, profile, sign out */}
+      <div className={cn("shrink-0 pb-6 pt-4", collapsed ? "px-3" : "px-4")}>
+        <button
+          type="button"
+          onClick={() => setCollapsed(!collapsed)}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          aria-pressed={collapsed}
+          className={cn(
+            "text-on-navy-muted hover:bg-white/[0.07] hover:text-on-navy mb-2 flex w-full items-center rounded-control py-2 text-[12px] transition-colors",
+            collapsed ? "justify-center" : "gap-2.5 px-3",
+          )}
+        >
+          {collapsed ? (
+            <PanelLeftOpen size={16} strokeWidth={1.75} />
+          ) : (
+            <>
+              <PanelLeftClose size={16} strokeWidth={1.75} className="shrink-0" />
+              <span className="truncate">Collapse</span>
+            </>
+          )}
+        </button>
+
+        <div
+          className={cn(
+            "border-navy-700 flex items-center border-t pt-4",
+            collapsed ? "flex-col gap-2" : "justify-between gap-2 px-1",
+          )}
+        >
           <Link
             href="/settings/profile"
-            className="flex min-w-0 items-center gap-2.5 rounded-control -mx-1 px-1 py-0.5 transition-colors hover:bg-white/5"
+            title={collapsed ? profileName : undefined}
+            className={cn(
+              "flex min-w-0 items-center rounded-control transition-colors hover:bg-white/5",
+              collapsed ? "justify-center p-1" : "-mx-1 gap-2.5 px-1 py-0.5",
+            )}
           >
             <Avatar
               name={profileName}
               src={session?.profile?.avatar_url ?? undefined}
               size="sm"
             />
-            <div className="min-w-0">
-              <p className="text-on-navy truncate text-xs font-semibold">
-                {profileName}
-              </p>
-              {session?.user?.email && (
-                <p className="text-on-navy-muted truncate text-[10.5px]">
-                  {session.user.email}
+            {!collapsed && (
+              <div className="min-w-0">
+                <p className="text-on-navy truncate text-xs font-semibold">
+                  {profileName}
                 </p>
-              )}
-            </div>
+                {session?.user?.email && (
+                  <p className="text-on-navy-muted truncate text-[10.5px]">
+                    {session.user.email}
+                  </p>
+                )}
+              </div>
+            )}
           </Link>
+
           {/*
            * Theme toggle lives in the shell, not on one page. It used to render
            * only inside the dashboard header, so every other route had no way to
            * switch mode.
            */}
-          <div className="flex shrink-0 items-center gap-0.5">
+          <div
+            className={cn(
+              "flex shrink-0 items-center",
+              collapsed ? "flex-col gap-1" : "gap-0.5",
+            )}
+          >
             <ThemeToggle variant="rail" />
             <button
               onClick={() => signOutAction()}
               title="Sign out"
               aria-label="Sign out"
-              className="text-on-navy-muted hover:text-on-navy hover:bg-white/5 flex size-7 shrink-0 items-center justify-center rounded-full transition-colors"
+              className="text-on-navy-muted hover:text-on-navy flex size-7 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-white/5"
             >
               <LogOut size={14} />
             </button>
@@ -249,4 +358,3 @@ export function AppRail({ session }: { session?: UserSession | null }) {
     </aside>
   );
 }
-

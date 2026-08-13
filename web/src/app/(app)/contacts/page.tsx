@@ -4,6 +4,7 @@ import * as React from "react";
 import { Users, Plus, Cake, Phone, Mail, Trash2 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
+import { PageActions } from "@/components/page-actions";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Select } from "@/components/ui/select";
@@ -107,18 +108,28 @@ export default function ContactsPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Contacts & Birthdays Directory</h1>
-          <p className="text-muted text-xs">
-            Manage household contacts, family members, committee participants, and birthday reminders.
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
+            Contacts
+          </h1>
+          <p className="text-muted mt-0.5 text-[12.5px]">
+            Family, committee members and the people you pay — with their birthdays.
           </p>
         </div>
 
-        <Button variant="primary" onClick={() => setAddModalOpen(true)} className="flex items-center gap-1.5 self-start sm:self-auto">
-          <Plus size={16} />
-          <span>Add Contact</span>
-        </Button>
+        <PageActions
+          title="Contacts"
+          actions={[
+            {
+              label: "Add contact",
+              hint: "A person you pay, owe, or share a committee with",
+              icon: Plus,
+              tone: "primary",
+              onClick: () => setAddModalOpen(true),
+            },
+          ]}
+        />
       </div>
 
       {loading ? (

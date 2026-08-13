@@ -4,6 +4,7 @@ import * as React from "react";
 import { Users, Plus, Calendar, CheckCircle2, Circle, Trash2, ShieldCheck } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
+import { PageActions } from "@/components/page-actions";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Modal } from "@/components/ui/modal";
@@ -100,18 +101,29 @@ export default function CommitteesPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Bachat Committees (BC) Manager</h1>
-          <p className="text-muted text-xs">
-            Manage household committee savings pools, monthly installments, and payout draw months.
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
+            Committee
+          </h1>
+          <p className="text-muted mt-0.5 text-[12.5px]">
+            Your BC pools — monthly instalments, members, and the month your payout
+            lands.
           </p>
         </div>
 
-        <Button variant="primary" onClick={() => setAddModalOpen(true)} className="flex items-center gap-1.5 self-start sm:self-auto">
-          <Plus size={16} />
-          <span>Create Committee</span>
-        </Button>
+        <PageActions
+          title="Committee"
+          actions={[
+            {
+              label: "Create committee",
+              hint: "A new BC pool with its members and draw month",
+              icon: Plus,
+              tone: "primary",
+              onClick: () => setAddModalOpen(true),
+            },
+          ]}
+        />
       </div>
 
       {loading ? (

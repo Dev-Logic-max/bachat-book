@@ -3,7 +3,7 @@
 import * as React from "react";
 import { CalendarDays, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useSession } from "@/components/session-provider";
-import { Button } from "@/components/ui/button";
+import { PageActions } from "@/components/page-actions";
 import { Reveal } from "@/components/reveal";
 import { EmptyState } from "@/components/empty-state";
 import { AddEventModal } from "@/components/add-event-modal";
@@ -157,7 +157,7 @@ export default function CalendarPage() {
 
   return (
     <div className="space-y-6">
-      <header className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+      <header className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="font-display text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
@@ -175,6 +175,9 @@ export default function CalendarPage() {
         </div>
 
         <div className="flex shrink-0 items-center gap-2.5 self-start">
+          {/* The view switch stays a real control at every width — it is two
+              words, and hiding it behind a menu would cost a tap on the thing
+              you toggle most on this screen. */}
           <div className="bg-surface border-border flex items-center gap-1 rounded-control border p-1">
             {(["month", "agenda"] as CalendarView[]).map((v) => (
               <button
@@ -182,7 +185,7 @@ export default function CalendarPage() {
                 onClick={() => setView(v)}
                 aria-pressed={view === v}
                 className={cn(
-                  "rounded-control px-3 py-1 text-xs font-semibold capitalize transition-colors",
+                  "rounded-control px-2.5 py-1 text-[12px] font-medium capitalize transition-colors",
                   view === v
                     ? "bg-navy-900 text-on-navy dark:bg-brass dark:text-navy-900"
                     : "text-muted hover:text-foreground",
@@ -193,14 +196,18 @@ export default function CalendarPage() {
             ))}
           </div>
 
-          <Button
-            variant="primary"
-            onClick={() => openDay(today)}
-            className="flex items-center gap-1.5"
-          >
-            <Plus size={16} />
-            <span>Add Event</span>
-          </Button>
+          <PageActions
+            title="Calendar"
+            actions={[
+              {
+                label: "Add event",
+                hint: "A bill date, a birthday, or anything with a day attached",
+                icon: Plus,
+                tone: "primary",
+                onClick: () => openDay(today),
+              },
+            ]}
+          />
         </div>
       </header>
 
@@ -270,7 +277,7 @@ export default function CalendarPage() {
                       dayEvents.length
                     } events. Add an event.`}
                     className={cn(
-                      "hover:bg-surface-subtle/80 focus-visible:ring-brass/40 flex min-h-[92px] flex-col gap-1.5 p-2 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none sm:min-h-[108px]",
+                      "hover:bg-surface-subtle/80 focus-visible:ring-brass/40 flex min-h-23 flex-col gap-1.5 p-2 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none sm:min-h-27",
                       // Outside days stay visible but recede, so the block keeps
                       // its shape without pretending those days belong here.
                       !inMonth && "bg-surface-subtle/30",

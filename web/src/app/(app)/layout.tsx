@@ -4,6 +4,7 @@ import { getSession } from "@/lib/session";
 import { SessionProvider } from "@/components/session-provider";
 import { ToastProvider } from "@/components/ui/toast";
 import { AppRail } from "@/components/app-rail";
+import { AppTopBar } from "@/components/app-top-bar";
 import { BottomNav } from "@/components/bottom-nav";
 
 export default async function AppLayout({
@@ -36,6 +37,12 @@ export default async function AppLayout({
            * the floating nav island sits over the last ~7rem of the page.
            */}
           <main className="mx-auto min-w-0 max-w-[1600px] flex-1 p-4 pb-28 sm:p-6 sm:pb-28 lg:p-8 lg:pb-8 w-full">
+            {/*
+              Above every page, at every width. The rail collapses on desktop and
+              is absent below lg, so this is the only fixed home for the account
+              control and the active workspace.
+            */}
+            <AppTopBar />
             {children}
           </main>
         </div>

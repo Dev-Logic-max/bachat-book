@@ -3,7 +3,7 @@
 import * as React from "react";
 import { TrendingUp, Plus, ShieldCheck, Landmark, BarChart3 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
-import { Button } from "@/components/ui/button";
+import { PageActions } from "@/components/page-actions";
 import { formatPKR } from "@/lib/format";
 
 export default function InvestmentsVaultPage() {
@@ -20,18 +20,29 @@ export default function InvestmentsVaultPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="font-display text-2xl font-bold tracking-tight">Investments & Savings Vault</h1>
-          <p className="text-muted text-xs">
-            Track National Savings Certificates (NSS), PSX Stocks, and Mutual Fund holdings.
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
+            Investments
+          </h1>
+          <p className="text-muted mt-0.5 text-[12.5px]">
+            National Savings certificates, prize bonds, PSX holdings and mutual
+            funds.
           </p>
         </div>
 
-        <Button variant="primary" className="flex items-center gap-1.5 self-start sm:self-auto">
-          <Plus size={16} />
-          <span>Add Holding</span>
-        </Button>
+        <PageActions
+          title="Investments"
+          actions={[
+            {
+              label: "Add holding",
+              hint: "Not wired up yet — this module is still read-only",
+              icon: Plus,
+              tone: "primary",
+              onClick: () => {},
+            },
+          ]}
+        />
       </div>
 
       {/* Hero Summary Card */}

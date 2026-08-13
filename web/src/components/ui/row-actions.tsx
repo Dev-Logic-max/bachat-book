@@ -26,6 +26,15 @@ export function RowActions({
   deleteLabel = "Delete",
   /** `hover` for cards and rows, `always` for detail-page headers. */
   reveal = "hover",
+  /**
+   * Show each action in its own colour at rest rather than neutral-until-hover.
+   *
+   * For TABLE rows with an "Actions" column. A hover-revealed control in a
+   * labelled column is a contradiction — the heading promises something the row
+   * does not show — and on a dense list you cannot tell which rows are editable
+   * without sweeping the pointer across all of them.
+   */
+  colored = false,
   className,
 }: {
   onEdit?: () => void;
@@ -41,6 +50,7 @@ export function RowActions({
   editLabel?: string;
   deleteLabel?: string;
   reveal?: "hover" | "always";
+  colored?: boolean;
   className?: string;
 }) {
   const base =
@@ -76,7 +86,8 @@ export function RowActions({
           aria-label={editLabel}
           className={cn(
             base,
-            "text-foreground-2 hover:text-brass-strong hover:bg-brass-soft",
+            "hover:text-brass-strong hover:bg-brass-soft",
+            colored ? "text-brass-strong" : "text-foreground-2",
           )}
         >
           <Pencil size={15} strokeWidth={1.75} />
@@ -103,7 +114,11 @@ export function RowActions({
           onClick={onDelete}
           title={deleteLabel}
           aria-label={deleteLabel}
-          className={cn(base, "text-muted hover:text-loss hover:bg-loss-soft")}
+          className={cn(
+            base,
+            "hover:text-loss hover:bg-loss-soft",
+            colored ? "text-loss/80" : "text-muted",
+          )}
         >
           <Trash2 size={15} strokeWidth={1.75} />
         </button>

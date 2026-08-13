@@ -79,6 +79,16 @@ export interface RichSelectProps {
   disabled?: boolean;
   emptyMessage?: string;
   hint?: string;
+  /**
+   * Badge pinned to the right of the TRIGGER, before the chevron — not part of
+   * any option. For facts about the current selection that the label cannot
+   * carry: the month filter uses it for the number of days the range covers,
+   * which is the thing you actually want to know and would otherwise have to
+   * work out from "August 2026".
+   */
+  trailing?: React.ReactNode;
+  /** Extra classes for the trigger, e.g. to widen a filter row control. */
+  className?: string;
 }
 
 /**
@@ -104,6 +114,8 @@ export function RichSelect({
   disabled = false,
   emptyMessage = "Nothing to choose from",
   hint,
+  trailing,
+  className,
 }: RichSelectProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [activeIndex, setActiveIndex] = React.useState(-1);
@@ -324,6 +336,7 @@ export function RichSelect({
           "hover:bg-surface-subtle/60 focus-visible:ring-2 focus-visible:ring-navy-900/10 dark:focus-visible:ring-brass/20",
           "disabled:cursor-not-allowed disabled:opacity-50",
           error && "border-loss",
+          className,
         )}
       >
         <span className="flex min-w-0 items-center gap-2.5">
@@ -346,13 +359,16 @@ export function RichSelect({
             {selectedOption ? selectedOption.label : placeholder}
           </span>
         </span>
-        <ChevronDown
-          size={16}
-          className={cn(
-            "text-muted shrink-0 transition-transform",
-            isOpen && "rotate-180",
-          )}
-        />
+        <span className="flex shrink-0 items-center gap-1.5">
+          {trailing}
+          <ChevronDown
+            size={16}
+            className={cn(
+              "text-muted transition-transform",
+              isOpen && "rotate-180",
+            )}
+          />
+        </span>
       </button>
 
       {isOpen &&
@@ -388,7 +404,7 @@ export function RichSelect({
               // option is always reachable on a short mobile screen.
               maxHeight: Math.max(160, window.innerHeight - rect.bottom - 24),
             }}
-            className="border-border bg-surface z-60 overflow-y-auto rounded-panel border p-1 shadow-xl"
+            className="scroll-hidden border-border bg-surface z-60 overflow-y-auto rounded-panel border p-1 shadow-xl"
           >
             {options.length === 0 ? (
               <p className="text-muted px-3 py-3 text-[11.5px]">{emptyMessage}</p>

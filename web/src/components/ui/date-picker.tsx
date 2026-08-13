@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { CalendarDays, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarDays, ChevronDown, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -21,6 +21,11 @@ import { cn } from "@/lib/utils";
 
 const WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
 
+const MONTHS = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
 function iso(d: Date): string {
   const m = `${d.getMonth() + 1}`.padStart(2, "0");
   const day = `${d.getDate()}`.padStart(2, "0");
@@ -33,6 +38,25 @@ function parseISO(value: string | undefined): Date | null {
   if (!y || !m || !d) return null;
   const parsed = new Date(y, m - 1, d);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+/**
+ * "today", "yesterday", "3 days ago", "in 2 days".
+ *
+ * The footer used to hold a "Done" button that did the same thing as clicking
+ * away. This slot is worth more spent saying how far back the chosen date is —
+ * the thing you actually want confirmed when backdating an expense.
+ */
+function relativeDay(value: string, today: string): string {
+  const a = parseISO(value);
+  const b = parseISO(today);
+  if (!a || !b) return "";
+  const days = Math.round((a.getTime() - b.getTime()) / 86_400_000);
+  if (days === 0) return "today";
+  if (days === -1) return "yesterday";
+  if (days === 1) return "tomorrow";
+  if (days < 0) return `${-days} days ago`;
+  return `in ${days} days`;
 }
 
 /** Monday-first offset. `getDay()` is Sunday-first, which shifts the whole grid. */
@@ -77,6 +101,8 @@ export function DatePicker({
 }: DatePickerProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [rect, setRect] = React.useState<DOMRect | null>(null);
+  /** Day grid vs the twelve-month grid. Reset every time the panel opens. */
+  const [pickingMonth, setPickingMonth] = React.useState(false);
 
   const selected = parseISO(value);
   const todayStr = iso(new Date());
@@ -124,6 +150,8 @@ export function DatePicker({
     measure();
     setPendingRefocus(false);
     setViewMonth(startOfMonth(parseISO(value) ?? new Date()));
+    // Always open on days. The month grid is a detour, never the landing state.
+    setPickingMonth(false);
     setIsOpen(true);
   };
 
@@ -155,6 +183,17 @@ export function DatePicker({
   const isBlocked = (day: string) =>
     (max !== undefined && day > max) || (min !== undefined && day < min);
 
+  /*
+   * A month is only unreachable when BOTH its ends are out of range. Testing the
+   * 1st alone would grey out the current month on every backdating field, since
+   * `max` is today and the 1st is in range but a mid-month `min` is not.
+   */
+  const isMonthFullyBlocked = (year: number, monthIndex: number) => {
+    const first = iso(new Date(year, monthIndex, 1));
+    const last = iso(new Date(year, monthIndex + 1, 0));
+    return (max !== undefined && first > max) || (min !== undefined && last < min);
+  };
+
   const commit = (day: string) => {
     if (isBlocked(day)) return;
     onChange(day);
@@ -180,9 +219,14 @@ export function DatePicker({
        */
       e.stopPropagation();
       e.nativeEvent.stopImmediatePropagation();
-      close();
+      // One level at a time: month grid → day grid → closed.
+      if (pickingMonth) setPickingMonth(false);
+      else close();
       return;
     }
+
+    // Day arithmetic makes no sense while the month grid is up.
+    if (pickingMonth) return;
 
     // Arrow keys walk days; PageUp/PageDown walk months.
     const step: Record<string, number> = {
@@ -208,20 +252,32 @@ export function DatePicker({
     }
   };
 
-  // The 6x7 grid: leading blanks for the weekday offset, then the month's days.
+  /*
+   * A full 6×7 block, always.
+   *
+   * The leading gap used to be empty <span>s and the trailing one did not exist,
+   * so February drew four rows and August six — the panel changed height as you
+   * paged through months and everything below it jumped. Neighbouring days are
+   * rendered muted and stay selectable: clicking 1 September from the August
+   * grid is the obvious thing to do.
+   */
   const monthStart = startOfMonth(viewMonth);
-  const daysInMonth = new Date(
-    viewMonth.getFullYear(),
-    viewMonth.getMonth() + 1,
-    0,
-  ).getDate();
   const lead = mondayIndex(monthStart);
-  const cells: Array<string | null> = [
-    ...Array.from({ length: lead }, () => null),
-    ...Array.from({ length: daysInMonth }, (_, i) =>
-      iso(new Date(viewMonth.getFullYear(), viewMonth.getMonth(), i + 1)),
-    ),
-  ];
+  const gridStart = new Date(
+    viewMonth.getFullYear(),
+    viewMonth.getMonth(),
+    1 - lead,
+  );
+  const cells = Array.from({ length: 42 }, (_, i) => {
+    const d = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + i);
+    return {
+      day: iso(d),
+      date: d.getDate(),
+      outside: d.getMonth() !== viewMonth.getMonth(),
+      // Sat/Sun sit a shade back — a month grid is read by working weeks.
+      weekend: d.getDay() === 0 || d.getDay() === 6,
+    };
+  });
 
   /*
    * "12 Aug 2026", not "Wed, 12 Aug 2026". These controls sit in half-width grid
@@ -237,10 +293,7 @@ export function DatePicker({
       })
     : "Choose a date";
 
-  const monthLabel = viewMonth.toLocaleDateString("en-GB", {
-    month: "long",
-    year: "numeric",
-  });
+  const monthName = viewMonth.toLocaleDateString("en-GB", { month: "long" });
 
   const panelWidth = 292;
 
@@ -300,99 +353,200 @@ export function DatePicker({
             style={{
               position: "fixed",
               width: panelWidth,
-              // Flip above the trigger when there is no room below, and never
-              // let the panel hang off the right edge on a narrow screen.
+              /*
+               * Flip above the trigger when there is no room below, and never
+               * let the panel hang off the right edge on a narrow screen.
+               *
+               * ~336px: header strip, six full weeks and the footer. The grid is
+               * always six rows now, so unlike the old ragged version this height
+               * does not change from month to month.
+               */
               top:
-                rect.bottom + 320 > window.innerHeight && rect.top > 320
-                  ? rect.top - 314
+                rect.bottom + 336 > window.innerHeight && rect.top > 336
+                  ? rect.top - 342
                   : rect.bottom + 6,
               left: Math.min(
                 Math.max(8, rect.left),
                 window.innerWidth - panelWidth - 8,
               ),
             }}
-            className="border-border bg-surface z-60 rounded-panel border p-3 shadow-xl"
+            className="border-border bg-surface z-60 overflow-hidden rounded-panel border shadow-lg"
           >
-            <div className="mb-2 flex items-center justify-between">
+            {/*
+              Header sits on its own tinted strip, mirroring Modal. It gives the
+              panel a top edge to hang from — three loose rows of controls on a
+              flat white sheet read as unfinished, not minimal.
+            */}
+            {/*
+              The header arrows step by ONE unit of whatever is on screen: a
+              month in the day grid, a year in the month grid. Paging twelve
+              times to reach last December is the thing this picker exists to
+              avoid, so the title itself is the switch between the two.
+            */}
+            <div className="bg-surface-subtle/60 border-border flex items-center justify-between border-b px-2.5 py-2">
               <button
                 type="button"
-                onClick={() => setViewMonth((m) => addMonths(m, -1))}
-                aria-label="Previous month"
-                className="text-muted hover:text-foreground hover:bg-surface-subtle flex size-7 items-center justify-center rounded-full transition-colors"
+                onClick={() =>
+                  setViewMonth((m) => (pickingMonth ? addMonths(m, -12) : addMonths(m, -1)))
+                }
+                aria-label={pickingMonth ? "Previous year" : "Previous month"}
+                className="text-muted hover:text-foreground hover:bg-surface flex size-7 items-center justify-center rounded-full transition-colors"
               >
-                <ChevronLeft size={16} />
+                <ChevronLeft size={15} />
               </button>
-              <span className="font-display text-[13px] font-semibold">
-                {monthLabel}
-              </span>
-              <button
-                type="button"
-                onClick={() => setViewMonth((m) => addMonths(m, 1))}
-                aria-label="Next month"
-                className="text-muted hover:text-foreground hover:bg-surface-subtle flex size-7 items-center justify-center rounded-full transition-colors"
-              >
-                <ChevronRight size={16} />
-              </button>
-            </div>
 
-            <div className="mb-1 grid grid-cols-7 gap-0.5">
-              {WEEKDAYS.map((w) => (
-                <span
-                  key={w}
-                  className="text-faint flex h-6 items-center justify-center text-[10px] font-semibold uppercase"
-                >
-                  {w}
+              <button
+                type="button"
+                onClick={() => setPickingMonth((p) => !p)}
+                aria-expanded={pickingMonth}
+                title={pickingMonth ? "Back to days" : "Pick a month"}
+                className="hover:bg-surface flex items-center gap-1.5 rounded-control px-2 py-0.5 leading-tight transition-colors"
+              >
+                <span className="text-center">
+                  <span className="font-display block text-[13px] font-semibold">
+                    {pickingMonth ? viewMonth.getFullYear() : monthName}
+                  </span>
+                  {!pickingMonth && (
+                    <span className="text-faint tnum block text-[10px] tracking-[0.14em]">
+                      {viewMonth.getFullYear()}
+                    </span>
+                  )}
                 </span>
-              ))}
+                <ChevronDown
+                  size={12}
+                  className={cn(
+                    "text-faint shrink-0 transition-transform",
+                    pickingMonth && "rotate-180",
+                  )}
+                />
+              </button>
+
+              <button
+                type="button"
+                onClick={() =>
+                  setViewMonth((m) => (pickingMonth ? addMonths(m, 12) : addMonths(m, 1)))
+                }
+                aria-label={pickingMonth ? "Next year" : "Next month"}
+                className="text-muted hover:text-foreground hover:bg-surface flex size-7 items-center justify-center rounded-full transition-colors"
+              >
+                <ChevronRight size={15} />
+              </button>
             </div>
 
-            <div className="grid grid-cols-7 gap-0.5">
-              {cells.map((day, i) => {
-                if (!day) return <span key={`blank-${i}`} />;
-                const blocked = isBlocked(day);
-                const isSelected = day === value;
-                const isToday = day === todayStr;
-                return (
-                  <button
-                    key={day}
-                    type="button"
-                    disabled={blocked}
-                    aria-current={isToday ? "date" : undefined}
-                    aria-pressed={isSelected}
-                    onClick={() => commit(day)}
+            {pickingMonth ? (
+              /*
+               * Twelve months of the year on screen. Sized to the same block the
+               * day grid occupies so the panel does not resize when you switch —
+               * a popover that changes height under the pointer feels broken.
+               */
+              <div className="grid h-59 grid-cols-3 content-center gap-1.5 p-2.5">
+                {MONTHS.map((label, i) => {
+                  const isViewed = i === viewMonth.getMonth();
+                  const isSelectedMonth =
+                    selected &&
+                    selected.getMonth() === i &&
+                    selected.getFullYear() === viewMonth.getFullYear();
+                  // Grey a month out only when EVERY day in it is out of range.
+                  const monthBlocked = isMonthFullyBlocked(viewMonth.getFullYear(), i);
+
+                  return (
+                    <button
+                      key={label}
+                      type="button"
+                      disabled={monthBlocked}
+                      onClick={() => {
+                        setViewMonth(new Date(viewMonth.getFullYear(), i, 1));
+                        setPickingMonth(false);
+                      }}
+                      className={cn(
+                        "flex h-11 items-center justify-center rounded-control text-[12.5px] transition-colors",
+                        !monthBlocked && !isSelectedMonth && "hover:bg-surface-subtle",
+                        isSelectedMonth &&
+                          "bg-navy-900 text-on-navy dark:bg-brass dark:text-navy-900 font-semibold",
+                        isViewed && !isSelectedMonth && "text-brass-strong font-semibold",
+                        monthBlocked && "text-faint cursor-not-allowed opacity-40",
+                      )}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+            <div className="p-2.5">
+              <div className="mb-1 grid grid-cols-7 gap-0.5">
+                {WEEKDAYS.map((w, i) => (
+                  <span
+                    key={w}
                     className={cn(
-                      "tnum flex h-8 items-center justify-center rounded-control text-[12.5px] transition-colors",
-                      !blocked && !isSelected && "hover:bg-surface-subtle",
-                      isSelected &&
-                        "bg-navy-900 text-on-navy dark:bg-brass dark:text-navy-900 font-semibold",
-                      // Today is a ring, not a fill — a fill competes with the
-                      // selected day and the two become indistinguishable.
-                      isToday && !isSelected && "ring-brass/60 text-brass-strong ring-1",
-                      blocked && "text-faint cursor-not-allowed opacity-40",
+                      "flex h-6 items-center justify-center text-[10px] font-semibold uppercase tracking-wide",
+                      i >= 5 ? "text-faint/70" : "text-faint",
                     )}
                   >
-                    {Number(day.slice(-2))}
-                  </button>
-                );
-              })}
-            </div>
+                    {w}
+                  </span>
+                ))}
+              </div>
 
-            <div className="border-border mt-2.5 flex items-center justify-between border-t pt-2.5">
+              <div className="grid grid-cols-7 gap-0.5">
+                {cells.map((cell) => {
+                  const blocked = isBlocked(cell.day);
+                  const isSelected = cell.day === value;
+                  const isToday = cell.day === todayStr;
+                  return (
+                    <button
+                      key={cell.day}
+                      type="button"
+                      disabled={blocked}
+                      aria-current={isToday ? "date" : undefined}
+                      aria-pressed={isSelected}
+                      onClick={() => commit(cell.day)}
+                      className={cn(
+                        "tnum relative flex h-8 items-center justify-center rounded-control text-[12.5px] transition-all",
+                        !blocked && !isSelected && "hover:bg-surface-subtle",
+                        cell.outside && !isSelected && "text-faint/60",
+                        cell.weekend && !cell.outside && !isSelected && "text-muted",
+                        isSelected &&
+                          "bg-navy-900 text-on-navy dark:bg-brass dark:text-navy-900 font-semibold shadow-sm",
+                        // Today is a DOT under the number, not a fill or a ring:
+                        // a fill competes with the selected day, and a ring on a
+                        // 32px cell sat a pixel off the hover background.
+                        isToday && !isSelected && "text-brass-strong font-semibold",
+                        blocked && "text-faint cursor-not-allowed opacity-40",
+                      )}
+                    >
+                      {cell.date}
+                      {isToday && (
+                        <span
+                          aria-hidden
+                          className={cn(
+                            "absolute bottom-1 size-1 rounded-full",
+                            isSelected ? "bg-on-navy dark:bg-navy-900" : "bg-brass",
+                          )}
+                        />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            )}
+
+            <div className="border-border bg-surface-subtle/40 flex items-center justify-between border-t px-2.5 py-2">
               <button
                 type="button"
-                onClick={() => commit(todayStr)}
+                onClick={() => {
+                  setPickingMonth(false);
+                  commit(todayStr);
+                }}
                 disabled={isBlocked(todayStr)}
                 className="text-brass-strong hover:bg-brass-soft rounded-control px-2 py-1 text-[11.5px] font-semibold transition-colors disabled:opacity-40"
               >
                 Today
               </button>
-              <button
-                type="button"
-                onClick={() => close()}
-                className="text-muted hover:text-foreground rounded-control px-2 py-1 text-[11.5px] font-medium transition-colors"
-              >
-                Done
-              </button>
+              <span className="text-faint text-[10.5px] italic">
+                {selected ? relativeDay(value, todayStr) : "no date set"}
+              </span>
             </div>
           </div>,
           document.body,

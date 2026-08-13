@@ -266,6 +266,52 @@
     display: none;
   }
 
+  /*
+   * Scrolls with NO visible bar. For modal bodies, dropdown lists and sheets.
+   *
+   * An 8px grey track down the right edge of a cream dialog is the single
+   * loudest thing in it, and `overflow: hidden` is not the alternative — that
+   * strands the fields below the fold. `.scroll-hidden` keeps every scrolling
+   * behaviour (wheel, drag, keyboard, scrollIntoView) and only drops the paint.
+   *
+   * The affordance comes from the layout instead: modal and popover bodies are
+   * cut off mid-row at the fold, and Modal's pinned footer gives a hard bottom
+   * edge, so it always reads as "there is more below" rather than "that is all".
+   */
+  .scroll-hidden {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .scroll-hidden::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+
+  /*
+   * Stat and summary blocks. Hover lifts the card a hair and warms the border to
+   * brass — enough to say "this is a live surface" without the brass reading as a
+   * selected state. Brass never touches the SHADOW (CLAUDE.md: a tinted shadow on
+   * cream reads as haze), only the border.
+   */
+  .lift {
+    transition:
+      box-shadow 180ms var(--ease-out-expo),
+      border-color 180ms var(--ease-out-expo);
+  }
+
+  .lift:hover {
+    border-color: color-mix(in oklab, var(--brass) 55%, var(--border));
+    box-shadow: var(--shadow-md);
+  }
+
+  /*
+   * Deliberately NO transform. A 1px rise is right on a small card and wrong on
+   * a full panel — the whole list shifts under the pointer the moment you hover
+   * a row inside it, and the rows have their own hover state already.
+   */
+
   /* Asset ticker rotation: cross-fade with a 4px rise. Replayed by remounting
      the row with a new `key` — see components/asset-ticker.tsx. */
   .ticker-swap {

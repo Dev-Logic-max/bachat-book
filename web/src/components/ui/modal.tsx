@@ -34,6 +34,56 @@ interface ModalProps {
   onSubmit?: (e: React.FormEvent<HTMLFormElement>) => void;
 }
 
+/*
+ * Every OPEN modal, innermost last.
+ *
+ * Modals nest — "Manage categories" opens over a half-filled Add Expense form —
+ * and without a stack two things break. Escape reaches every listener at once, so
+ * backing out of the inner dialog throws away the form behind it. And the inner
+ * one's cleanup ran `overflow: unset` on close, unlocking page scroll while the
+ * outer dialog was still up, so the page scrolled behind an open modal.
+ *
+ * Module scope rather than context: this is a property of the document, and a
+ * provider would have to wrap every route to be worth anything.
+ */
+const MODAL_STACK: string[] = [];
+
+/**
+ * Register an overlay on the stack: locks page scroll, and answers Escape only
+ * while it is the TOPMOST layer.
+ *
+ * Exported because Drawer needs identical behaviour. Two independent
+ * implementations of "am I on top?" is how a drawer opened over a modal ends up
+ * closing both.
+ */
+export function useOverlayLayer(isOpen: boolean, onClose: () => void) {
+  const id = React.useId();
+
+  React.useEffect(() => {
+    if (!isOpen) return;
+
+    MODAL_STACK.push(id);
+    document.body.style.overflow = "hidden";
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (MODAL_STACK[MODAL_STACK.length - 1] !== id) return;
+      onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+
+    return () => {
+      const at = MODAL_STACK.lastIndexOf(id);
+      if (at >= 0) MODAL_STACK.splice(at, 1);
+      window.removeEventListener("keydown", handleKeyDown);
+      // Scroll comes back only once nothing is left open.
+      if (MODAL_STACK.length === 0) document.body.style.overflow = "unset";
+    };
+  }, [isOpen, onClose, id]);
+
+  return id;
+}
+
 export function Modal({
   isOpen,
   onClose,
@@ -48,21 +98,7 @@ export function Modal({
   footer,
   onSubmit,
 }: ModalProps) {
-  const baseId = React.useId();
-
-  React.useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    if (isOpen) {
-      document.body.style.overflow = "hidden";
-      window.addEventListener("keydown", handleKeyDown);
-    }
-    return () => {
-      document.body.style.overflow = "unset";
-      window.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [isOpen, onClose]);
+  const baseId = useOverlayLayer(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -73,10 +109,17 @@ export function Modal({
   const shellClass = "flex min-h-0 flex-1 flex-col";
   const shellBody = (
     <>
-      <div className="flex-1 overflow-y-auto p-6">{children}</div>
+      {/*
+        `scroll-hidden`: no visible bar at all. An 8px grey track down the right
+        edge of a cream dialog is the loudest thing in it, and the fold plus the
+        pinned footer below already say there is more to scroll to.
+      */}
+      <div className="scroll-hidden flex-1 overflow-y-auto p-5">{children}</div>
 
+      {/* py-2.5 with h-9 buttons = a 56px strip. It was 72px, which made the
+          action row heavier than the fields it belongs to. */}
       {footer && (
-        <div className="border-border bg-surface-subtle/50 flex shrink-0 items-center justify-end gap-3 border-t px-6 py-4">
+        <div className="border-border bg-surface-subtle/50 flex shrink-0 items-center justify-end gap-2 border-t px-5 py-2.5">
           {footer}
         </div>
       )}
@@ -109,32 +152,33 @@ export function Modal({
         )}
       >
         {/* Header */}
-        <div className="flex shrink-0 flex-col border-b border-border bg-surface-subtle/50 px-6 py-4">
+        <div className="flex shrink-0 flex-col border-b border-border bg-surface-subtle/50 px-5 py-3">
           <div className="flex items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
               {icon && (
-                <div className="w-9 h-9 rounded-full bg-brass/10 text-brass flex items-center justify-center font-bold text-sm shrink-0">
+                <div className="size-8 rounded-full bg-brass/10 text-brass flex items-center justify-center font-bold text-sm shrink-0">
                   {icon}
                 </div>
               )}
-              <div>
+              <div className="min-w-0">
                 <h2
                   id={titleId}
-                  className="font-display text-base font-bold tracking-tight text-foreground"
+                  className="font-display truncate text-[15px] font-bold tracking-tight text-foreground"
                 >
                   {title}
                 </h2>
                 {subtitle && (
-                  <p className="text-muted text-xs mt-0.5">{subtitle}</p>
+                  <p className="text-muted mt-0.5 text-[11.5px]">{subtitle}</p>
                 )}
               </div>
             </div>
 
             <button
               onClick={onClose}
-              className="text-muted hover:text-foreground hover:bg-surface-subtle flex h-8 w-8 items-center justify-center rounded-full transition-colors"
+              aria-label="Close"
+              className="text-muted hover:text-foreground hover:bg-surface-subtle flex size-7 shrink-0 items-center justify-center rounded-full transition-colors"
             >
-              <X size={16} />
+              <X size={15} />
             </button>
           </div>
 

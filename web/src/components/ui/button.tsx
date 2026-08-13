@@ -19,11 +19,22 @@ const buttonVariants = cva(
         brass:
           "bg-brass text-navy-900 hover:bg-brass/90 font-semibold shadow-sm",
       },
+      /*
+       * Compact by design.
+       *
+       * `md` used to be h-10 / text-sm, which made every modal footer a 40px
+       * button row inside a 72px strip — the heaviest thing in a dialog whose
+       * job is the fields above it. The scale now starts from the dashboard's
+       * "Add Entry" pill (h-9, 12.5px), which was the one control on the app
+       * that already looked right, and everything else matches it.
+       *
+       * `lg` is for marketing and auth pages, where a button IS the page.
+       */
       size: {
-        sm: "h-8 px-3 text-xs",
-        md: "h-10 px-4 text-sm",
-        lg: "h-12 px-6 text-base rounded-card",
-        icon: "h-9 w-9 rounded-full p-0",
+        sm: "h-7 px-2.5 text-[11.5px] gap-1",
+        md: "h-9 px-3.5 text-[12.5px] gap-1.5",
+        lg: "h-11 px-5 text-sm rounded-card gap-2",
+        icon: "size-8 rounded-full p-0",
       },
     },
     defaultVariants: {

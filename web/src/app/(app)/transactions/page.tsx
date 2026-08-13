@@ -6,11 +6,16 @@ import { Search, Plus, ArrowLeftRight, ArrowDownRight, ArrowUpRight, Landmark } 
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { RichSelect } from "@/components/ui/select";
+import { CategoryIcon } from "@/components/category-icon";
+import { accountSelectOptions } from "@/components/account-options";
+import type { AccountWithInstitution } from "@/components/account-options";
+import type { SelectOption } from "@/components/ui/select";
 import { AddTransactionModal } from "@/components/add-transaction-modal";
 import { TransferModal } from "@/components/transfer-modal";
 import { TransactionDrawer } from "@/components/transaction-drawer";
 import { createClient } from "@/lib/supabase/client";
+import { isBankingMovement } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 import type { Tables } from "@/lib/supabase/types";
 
@@ -39,9 +44,10 @@ function TransactionsPageInner() {
   const searchParams = useSearchParams();
 
   const householdId = session.household?.id || "";
+  const userId = session.user.id;
 
   const [transactions, setTransactions] = React.useState<TransactionFull[]>([]);
-  const [accounts, setAccounts] = React.useState<Tables<"accounts">[]>([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
@@ -70,13 +76,18 @@ function TransactionsPageInner() {
           .eq("household_id", householdId)
           .order("date", { ascending: false })
           .order("created_at", { ascending: false }),
-        supabase.from("accounts").select("*").eq("household_id", householdId).eq("is_archived", false),
+        supabase
+          .from("accounts")
+          .select("*, institutions(*)")
+          .eq("household_id", householdId)
+          .eq("is_archived", false)
+          .is("deleted_at", null),
         supabase.from("categories").select("*").order("name", { ascending: true }),
       ]);
 
       if (active) {
         if (txRes.data) setTransactions(txRes.data as unknown as TransactionFull[]);
-        if (accRes.data) setAccounts(accRes.data);
+        if (accRes.data) setAccounts(accRes.data as unknown as AccountWithInstitution[]);
         if (catRes.data) setCategories(catRes.data);
         setLoading(false);
       }
@@ -89,6 +100,18 @@ function TransactionsPageInner() {
   }, [householdId, refreshKey, supabase]);
 
   const filteredTransactions = transactions.filter((tx) => {
+    /*
+     * THIS SCREEN IS A VIEW, NOT A SEPARATE LEDGER.
+     *
+     * It shows money that touched a bank or wallet, plus transfers between
+     * accounts. Cash spending is deliberately absent — it is already on Entries,
+     * and repeating it here made the same rupees look like two events.
+     *
+     * Transfers always show regardless of account: both legs must appear or a
+     * pair reads as money vanishing from one side.
+     */
+    if (!isBankingMovement(tx, tx.accounts?.type)) return false;
+
     if (selectedAccountId !== "all" && tx.account_id !== selectedAccountId) return false;
     if (selectedType !== "all" && tx.type !== selectedType) return false;
     if (selectedCategoryId !== "all" && tx.category_id !== selectedCategoryId) return false;
@@ -105,21 +128,30 @@ function TransactionsPageInner() {
     return true;
   });
 
-  const accountOptions = [
-    { value: "all", label: "All Accounts" },
-    ...accounts.map((a) => ({ value: a.id, label: a.name })),
+  /*
+   * Filters, not entry forms: nothing is disabled here. A deactivated account
+   * still has history worth looking at, so its rows must stay reachable — hence
+   * `disableBlocked: false` and no direction to score a lock against.
+   */
+  const accountOptions: SelectOption[] = [
+    { value: "all", label: "All accounts" },
+    ...accountSelectOptions(accounts, { disableBlocked: false }),
   ];
 
-  const typeOptions = [
-    { value: "all", label: "All Transaction Types" },
-    { value: "expense", label: "Expenses Only" },
-    { value: "income", label: "Income Only" },
-    { value: "transfer", label: "Transfers Only" },
+  const typeOptions: SelectOption[] = [
+    { value: "all", label: "Income, expense and transfers" },
+    { value: "expense", label: "Expenses only", icon: <ArrowDownRight size={15} /> },
+    { value: "income", label: "Income only", icon: <ArrowUpRight size={15} /> },
+    { value: "transfer", label: "Transfers only", icon: <ArrowLeftRight size={15} /> },
   ];
 
-  const categoryOptions = [
-    { value: "all", label: "All Categories" },
-    ...categories.map((c) => ({ value: c.id, label: c.name })),
+  const categoryOptions: SelectOption[] = [
+    { value: "all", label: "All categories" },
+    ...categories.map((c) => ({
+      value: c.id,
+      label: c.name,
+      icon: <CategoryIcon icon={c.icon} size={15} />,
+    })),
   ];
 
   const reloadData = () => setRefreshKey((k) => k + 1);
@@ -161,21 +193,23 @@ function TransactionsPageInner() {
             />
           </div>
 
-          <Select
+          <RichSelect
             value={selectedAccountId}
-            onChange={(e) => setSelectedAccountId(e.target.value)}
+            onChange={setSelectedAccountId}
             options={accountOptions}
           />
 
-          <Select
+          <RichSelect
             value={selectedType}
-            onChange={(e) => setSelectedType(e.target.value as "all" | "income" | "expense" | "transfer")}
+            onChange={(v) =>
+              setSelectedType(v as "all" | "income" | "expense" | "transfer")
+            }
             options={typeOptions}
           />
 
-          <Select
+          <RichSelect
             value={selectedCategoryId}
-            onChange={(e) => setSelectedCategoryId(e.target.value)}
+            onChange={setSelectedCategoryId}
             options={categoryOptions}
           />
         </div>
@@ -259,6 +293,16 @@ function TransactionsPageInner() {
                         <span>•</span>
                         <span className="font-medium text-foreground/80">
                           {tx.accounts?.name || "Account"}
+                          {/*
+                            The account was deleted, but this row survived on
+                            purpose so past months still add up. Say so, rather
+                            than showing a name that no longer resolves anywhere.
+                          */}
+                          {tx.accounts?.deleted_at && (
+                            <span className="text-faint ml-1.5 rounded-full border border-border px-1.5 py-0.5 text-[9px] font-medium">
+                              Deleted account
+                            </span>
+                          )}
                         </span>
                         {tx.note && (
                           <>
@@ -293,6 +337,7 @@ function TransactionsPageInner() {
         isOpen={addTxOpen}
         onClose={() => setAddTxOpen(false)}
         householdId={householdId}
+        userId={userId}
         onSuccess={reloadData}
       />
 

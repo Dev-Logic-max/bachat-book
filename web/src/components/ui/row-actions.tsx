@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Pencil, Trash2, Link2, Link2Off } from "lucide-react";
+import { Pencil, Power, PowerOff, Trash2, Link2, Link2Off } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +20,8 @@ export function RowActions({
   onEdit,
   onDelete,
   onUnlink,
+  onToggleActive,
+  isActive = true,
   editLabel = "Edit",
   deleteLabel = "Delete",
   /** `hover` for cards and rows, `always` for detail-page headers. */
@@ -29,6 +31,13 @@ export function RowActions({
   onEdit?: () => void;
   onDelete?: () => void;
   onUnlink?: () => void;
+  /**
+   * Deactivate / reactivate. Distinct from delete on purpose — deactivating is
+   * reversible and keeps every record, so it must not sit behind the same red
+   * icon as the permanent one.
+   */
+  onToggleActive?: () => void;
+  isActive?: boolean;
   editLabel?: string;
   deleteLabel?: string;
   reveal?: "hover" | "always";
@@ -71,6 +80,21 @@ export function RowActions({
           )}
         >
           <Pencil size={15} strokeWidth={1.75} />
+        </button>
+      )}
+      {onToggleActive && (
+        <button
+          type="button"
+          onClick={onToggleActive}
+          title={isActive ? "Deactivate" : "Reactivate"}
+          aria-label={isActive ? "Deactivate" : "Reactivate"}
+          className={cn(base, "text-muted hover:text-foreground-2 hover:bg-surface-3")}
+        >
+          {isActive ? (
+            <PowerOff size={15} strokeWidth={1.75} />
+          ) : (
+            <Power size={15} strokeWidth={1.75} />
+          )}
         </button>
       )}
       {onDelete && (

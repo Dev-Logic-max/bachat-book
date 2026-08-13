@@ -3,11 +3,13 @@
 import * as React from "react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { RichSelect } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
+import { todayISO } from "@/lib/ledger";
 import type { EventType } from "@/lib/supabase/types";
 
 interface AddEventModalProps {
@@ -40,7 +42,8 @@ export function AddEventModal({
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [prevDefaultDate, setPrevDefaultDate] = React.useState(defaultDate || "");
-  const [date, setDate] = React.useState(() => defaultDate || new Date().toISOString().split("T")[0]);
+  // Local date. toISOString() is UTC and lands on yesterday before 05:00 PKT.
+  const [date, setDate] = React.useState(() => defaultDate || todayISO());
   const [time, setTime] = React.useState("10:00");
   const [isAllDay, setIsAllDay] = React.useState(true);
   const [eventType, setEventType] = React.useState<EventType>("general");
@@ -63,13 +66,20 @@ export function AddEventModal({
 
     setLoading(true);
 
-    const startDateTime = isAllDay
-      ? `${date}T00:00:00.000Z`
-      : `${date}T${time}:00.000Z`;
-
+    /*
+     * LOCAL times, converted properly.
+     *
+     * These were built as `${date}T${time}:00.000Z` — local digits with a UTC
+     * marker glued on. An event set for 10:00 in Karachi was stored as 10:00Z and
+     * read back as 15:00. Constructing a Date from local parts and letting
+     * toISOString do the conversion is the only version that survives a timezone.
+     */
+    const [y, m, d] = date.split("-").map(Number);
+    const [hh, mm] = isAllDay ? [0, 0] : time.split(":").map(Number);
+    const startDateTime = new Date(y, m - 1, d, hh, mm, 0).toISOString();
     const endDateTime = isAllDay
-      ? `${date}T23:59:59.000Z`
-      : `${date}T${time}:00.000Z`;
+      ? new Date(y, m - 1, d, 23, 59, 59).toISOString()
+      : new Date(y, m - 1, d, hh, mm, 0).toISOString();
 
     const selectedTypeObj = EVENT_TYPES.find((t) => t.value === eventType);
 
@@ -100,8 +110,23 @@ export function AddEventModal({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add Calendar Event">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Add Calendar Event"
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={loading}>
+            Save Event
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
         <Input
           label="Event Title"
           placeholder="e.g. K-Electric Bill Due, Family Dinner"
@@ -110,21 +135,29 @@ export function AddEventModal({
           required
         />
 
-        <Select
+        {/* The colour swatch is the legend the month grid is read by. */}
+        <RichSelect
           label="Event Category"
           value={eventType}
-          onChange={(e) => setEventType(e.target.value as EventType)}
-          options={EVENT_TYPES.map((t) => ({ value: t.value, label: t.label }))}
+          onChange={(v) => setEventType(v as EventType)}
+          options={EVENT_TYPES.map((t) => ({
+            value: t.value,
+            label: t.label,
+            icon: (
+              <span
+                className="size-3.5 shrink-0 rounded-full"
+                style={{ backgroundColor: t.color }}
+              />
+            ),
+          }))}
         />
 
-        <div className="grid grid-cols-2 gap-3">
-          <Input
-            label="Date"
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            required
-          />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {/*
+            No `max` here, unlike the money forms: a calendar event is usually in
+            the FUTURE. A bill due next Tuesday is the normal case.
+          */}
+          <DatePicker label="Date" value={date} onChange={setDate} required />
 
           {!isAllDay && (
             <Input
@@ -132,6 +165,7 @@ export function AddEventModal({
               type="time"
               value={time}
               onChange={(e) => setTime(e.target.value)}
+              className="ltr"
             />
           )}
         </div>
@@ -150,15 +184,7 @@ export function AddEventModal({
           onChange={(e) => setDescription(e.target.value)}
         />
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-border">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={loading}>
-            Save Event
-          </Button>
-        </div>
-      </form>
+      </div>
     </Modal>
   );
 }

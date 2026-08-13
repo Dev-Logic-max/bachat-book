@@ -4,6 +4,7 @@ import * as React from "react";
 import { X, Trash2, CheckSquare, Square, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Select } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
@@ -197,12 +198,7 @@ export function TaskDrawer({ task, onClose, onUpdate }: TaskDrawerProps) {
             </div>
 
             <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Due Date"
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-              />
+              <DatePicker label="Due Date" value={dueDate} onChange={setDueDate} />
 
               <Input
                 label="Linked Tag / Module"

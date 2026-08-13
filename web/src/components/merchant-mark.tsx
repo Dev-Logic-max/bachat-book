@@ -1,3 +1,5 @@
+import { ImageOff } from "lucide-react";
+
 import { cn } from "@/lib/utils";
 
 /**
@@ -14,12 +16,21 @@ export function MerchantMark({
   logo,
   size = 36,
   className,
+  awaitingLogo = false,
 }: {
   name: string;
   brand: string;
   logo?: string;
   size?: number;
   className?: string;
+  /**
+   * Say out loud that the real mark is still missing, rather than passing a
+   * monogram off as the brand. Set on institutions whose `logo_path` was cleared
+   * because the file on disk turned out to be a DIFFERENT company's logo — a
+   * placeholder you can spot is the point, so the gap stays visible until an
+   * authentic asset lands in /public/logos.
+   */
+  awaitingLogo?: boolean;
 }) {
   const initials = name
     .replace(/[^a-zA-Z\s.]/g, "")
@@ -48,6 +59,28 @@ export function MerchantMark({
           height={Math.round(size * 0.62)}
           className="object-contain"
           style={{ width: size * 0.62, height: size * 0.62 }}
+        />
+      </span>
+    );
+  }
+
+  // Brand colour is kept so the row still reads as that institution, but the
+  // dashed ring and the "no image" glyph mark it as a stand-in at a glance.
+  if (awaitingLogo) {
+    return (
+      <span
+        aria-label={`${name} — logo pending`}
+        title={`${name} — authentic logo not added yet`}
+        className={cn(
+          "inline-flex shrink-0 items-center justify-center overflow-hidden rounded-full border border-dashed border-white/45",
+          className,
+        )}
+        style={{ width: size, height: size, background: brand }}
+      >
+        <ImageOff
+          size={Math.round(size * 0.46)}
+          strokeWidth={1.9}
+          className="text-white/85"
         />
       </span>
     );

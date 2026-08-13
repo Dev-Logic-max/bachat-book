@@ -19,6 +19,7 @@ import {
   Settings,
   ShieldCheck,
   TrendingUp,
+  Contact,
   Users,
   Wallet,
 } from "lucide-react";
@@ -35,29 +36,49 @@ import type { UserSession } from "@/lib/session";
 export function AppRail({ session }: { session?: UserSession | null }) {
   const pathname = usePathname();
 
-  const PRIMARY = [
+/*
+   * Ordered by how often a rupee-a-day user actually touches each screen, not by
+   * how the modules were built. Logging money comes first, planning second, the
+   * once-a-month surfaces last.
+   *
+   * `soon` marks a module that is wired but not finished. It stays reachable —
+   * hiding it would make it impossible to keep testing — but the chip stops it
+   * from reading as a working feature.
+   */
+  const DAILY = [
     { icon: LayoutDashboard, label: "Overview", href: "/dashboard" },
-    { icon: Bot, label: "AI Copilot", href: "/ai-assistant" },
     { icon: NotebookPen, label: "Entries", href: "/entries" },
-    { icon: ArrowLeftRight, label: "Transactions", href: "/transactions" },
-    { icon: FileSpreadsheet, label: "Import Statement", href: "/transactions/import" },
     { icon: Wallet, label: "Accounts", href: "/accounts" },
-    { icon: CalendarDays, label: "Calendar", href: "/calendar" },
+    { icon: ArrowLeftRight, label: "Transactions", href: "/transactions" },
+  ];
+
+  const PLANNER = [
     { icon: ListChecks, label: "Tasks", href: "/tasks" },
-    { icon: ScanLine, label: "Receipts", href: "/receipts" },
+    { icon: CalendarDays, label: "Calendar", href: "/calendar" },
   ];
 
   const MONEY = [
+    { icon: CircleDollarSign, label: "Budgets", href: "/budgets" },
     { icon: TrendingUp, label: "Investments", href: "/wealth/investments" },
     { icon: Users, label: "Committee", href: "/wealth/committees" },
     { icon: HandHeart, label: "Zakat", href: "/wealth/zakat" },
-    { icon: CircleDollarSign, label: "Budgets", href: "/budgets" },
-    { icon: Users, label: "Contacts", href: "/contacts" },
+    { icon: Contact, label: "Contacts", href: "/contacts" },
+  ];
+
+  const TOOLS = [
+    { icon: PieChart, label: "Reports", href: "/reports" },
+    { icon: Landmark, label: "Tax & FBR", href: "/tax" },
+    { icon: Bot, label: "AI Copilot", href: "/ai-assistant", soon: true },
+    {
+      icon: FileSpreadsheet,
+      label: "Import Statement",
+      href: "/transactions/import",
+      soon: true,
+    },
+    { icon: ScanLine, label: "Receipts", href: "/receipts", soon: true },
   ];
 
   const CLOSING = [
-    { icon: PieChart, label: "Reports", href: "/reports" },
-    { icon: Landmark, label: "Tax & FBR", href: "/tax" },
     { icon: ShieldCheck, label: "Admin Console", href: "/admin" },
     { icon: Settings, label: "Settings", href: "/settings" },
   ];
@@ -74,7 +95,12 @@ export function AppRail({ session }: { session?: UserSession | null }) {
 
   const renderGroup = (
     label: string,
-    items: Array<{ icon: LucideIcon; label: string; href: string }>,
+    items: Array<{
+      icon: LucideIcon;
+      label: string;
+      href: string;
+      soon?: boolean;
+    }>,
   ) => (
     <div>
       <p className="text-on-navy-muted/70 px-3 pb-2 text-[10px] font-semibold uppercase tracking-[0.16em]">
@@ -101,7 +127,12 @@ export function AppRail({ session }: { session?: UserSession | null }) {
                   strokeWidth={1.75}
                   className={isActive ? "text-brass" : ""}
                 />
-                {item.label}
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.soon && (
+                  <span className="bg-white/10 text-on-navy-muted shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.08em]">
+                    Soon
+                  </span>
+                )}
               </Link>
             </li>
           );
@@ -141,9 +172,11 @@ export function AppRail({ session }: { session?: UserSession | null }) {
 
       {/* The only scrolling region. Scrollbar hidden, still scrollable. */}
       <nav className="scrollbar-none flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-4 py-2">
-        {renderGroup("Daily", PRIMARY)}
+        {renderGroup("Daily", DAILY)}
+        {renderGroup("Planner", PLANNER)}
         {renderGroup("Wealth", MONEY)}
-        {renderGroup("Review", CLOSING)}
+        {renderGroup("Insights & tools", TOOLS)}
+        {renderGroup("System", CLOSING)}
       </nav>
 
       {/*

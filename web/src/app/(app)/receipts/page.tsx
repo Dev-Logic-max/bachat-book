@@ -172,8 +172,23 @@ export default function ReceiptsPage() {
       )}
 
       {/* Upload Receipt Modal */}
-      <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Upload Receipt Document">
-        <form onSubmit={handleAddReceipt} className="space-y-4">
+      <Modal
+        isOpen={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        title="Upload Receipt Document"
+        onSubmit={handleAddReceipt}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Save Receipt
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
           <Input
             label="Merchant / Store Name"
             placeholder="e.g. Imtiaz Super Market, Shell Petrol"
@@ -197,15 +212,7 @@ export default function ReceiptsPage() {
             onChange={(e) => setNotes(e.target.value)}
           />
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Receipt
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

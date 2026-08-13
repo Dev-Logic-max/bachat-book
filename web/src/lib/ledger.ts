@@ -2,18 +2,34 @@ import type { Tables } from "@/lib/supabase/types";
 
 export type Category = Tables<"categories">;
 export type Account = Tables<"accounts">;
-export type QuickEntry = Tables<"quick_entries">;
+export type Movement = Tables<"transactions">;
 
 /**
- * quick_entries.amount_paisa is UNSIGNED with direction in `type`.
- * transactions.amount_paisa is SIGNED (income > 0, expense < 0) — the account
- * balance trigger adds it directly.
+ * ONE LEDGER.
  *
- * These two helpers are the only place that conversion should happen in app code.
- * The database triggers from migration 0011 do the same thing for linked pairs;
- * duplicating the logic inline is how the two drift apart.
+ * `transactions` is the only store of money movement. Entries and Transactions
+ * are two FILTERED VIEWS of these rows, never two copies:
+ *
+ *   Entries      — every income and expense, cash included. Answers "what came
+ *                  in, what went out, what's left".
+ *   Transactions — money that touched a bank or wallet, plus transfers between
+ *                  accounts. Cash spending stays out.
+ *   Accounts     — the balances those rows add up to.
+ *
+ * There used to be a second table, `quick_entries`, holding the same movement
+ * again with an OPTIONAL link between the copies. Three triggers tried to keep
+ * them matching and the gaps were where the bugs lived: changing an entry's
+ * account was a silent no-op, and unlinking left the transaction behind so the
+ * account stayed debited with nothing to explain it. There is now one row to
+ * edit, so edit and delete cannot fall out of step.
  */
-export function entryToSignedPaisa(
+
+/**
+ * A form collects a POSITIVE amount plus a direction. The column is SIGNED and
+ * the balance trigger adds it straight to the account, so income must be stored
+ * positive and expense negative. This is the only place that conversion happens.
+ */
+export function toSignedPaisa(
   type: "income" | "expense",
   unsignedPaisa: number,
 ): number {
@@ -21,7 +37,8 @@ export function entryToSignedPaisa(
   return type === "income" ? magnitude : -magnitude;
 }
 
-export function signedToEntry(signedPaisa: number): {
+/** The inverse, for seeding an edit form from a stored row. */
+export function fromSignedPaisa(signedPaisa: number): {
   type: "income" | "expense";
   amount_paisa: number;
 } {
@@ -29,6 +46,67 @@ export function signedToEntry(signedPaisa: number): {
     type: signedPaisa >= 0 ? "income" : "expense",
     amount_paisa: Math.abs(signedPaisa),
   };
+}
+
+/** Account types whose movements belong on the Transactions screen. */
+export const BANKING_ACCOUNT_TYPES = ["checking", "savings", "wallet"] as const;
+
+/**
+ * Why an account cannot take a movement right now — or null when it can.
+ *
+ * Returned as a short label rather than a boolean because the pickers SHOW these
+ * accounts rather than hiding them: an account that silently vanishes reads as
+ * data loss, while a greyed row with "Locked" beside it explains itself. The
+ * database enforces the same three rules in assert_account_accepts_movement, so
+ * this is the explanation, not the protection.
+ */
+export function accountBlockedReason(
+  account: Pick<Account, "is_archived" | "is_locked" | "deleted_at">,
+  direction: "income" | "expense",
+): string | null {
+  if (account.deleted_at) return "Deleted";
+  if (account.is_archived) return "Deactivated";
+  // A lock only bites on the way out. Paying into savings is the point of it.
+  if (account.is_locked && direction === "expense") return "Locked";
+  return null;
+}
+
+/** Accounts that still count toward what you hold. */
+export function isLiveAccount(
+  account: Pick<Account, "is_archived" | "deleted_at">,
+): boolean {
+  return !account.is_archived && !account.deleted_at;
+}
+
+/**
+ * Does this movement belong on the Transactions screen?
+ *
+ * Transfers always do — moving money between accounts is what the screen is for,
+ * and both legs must show or the pair reads as money vanishing. Otherwise it
+ * shows only what touched a bank or wallet; cash spending is already on Entries.
+ */
+export function isBankingMovement(
+  movement: Pick<Movement, "type">,
+  accountType: string | undefined,
+): boolean {
+  if (movement.type === "transfer") return true;
+  return BANKING_ACCOUNT_TYPES.includes(
+    accountType as (typeof BANKING_ACCOUNT_TYPES)[number],
+  );
+}
+
+/**
+ * Does this movement belong on the Entries screen?
+ *
+ * Opening balances are excluded: they are the position an account STARTED at,
+ * not money that came in. Counting them made "money in this month" include the
+ * Rs 36,500 already sitting in the accounts. Transfers are excluded too — they
+ * are neither income nor expense, and both legs would cancel anyway.
+ */
+export function isEntryMovement(
+  movement: Pick<Movement, "type" | "is_opening">,
+): boolean {
+  return !movement.is_opening && movement.type !== "transfer";
 }
 
 /**

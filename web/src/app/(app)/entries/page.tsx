@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowDownRight, ArrowUpRight, Link2Off, NotebookPen, Plus } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, NotebookPen, Plus, Wallet } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Panel, Rows } from "@/components/panels";
 import { Reveal } from "@/components/reveal";
@@ -13,7 +13,7 @@ import { CategoryChip } from "@/components/category-icon";
 import { RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
-import { deleteQuickEntry } from "@/lib/ledger-actions";
+import { deleteMovement } from "@/lib/ledger-actions";
 import { formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -27,10 +27,14 @@ type TypeFilter = "all" | "income" | "expense";
 /**
  * The Entries module.
  *
- * Every figure on this page comes from `quick_entries` ALONE — no account
- * balances, no transaction rows. That is the point of the module: it is the one
- * screen where the daily log stands on its own. Combining the two tables happens
- * on the dashboard and nowhere else.
+ * Every income and expense, cash included, from the single ledger. It answers
+ * "what came in, what went out, what's left" — and because every row names an
+ * account, "what's left" now RECONCILES against the Accounts page instead of
+ * being a parallel number.
+ *
+ * Excluded here: transfers (neither income nor expense; both legs would cancel)
+ * and opening balances (the position an account started at, not money earned).
+ * Both live on Transactions.
  */
 export default function EntriesPage() {
   const session = useSession();
@@ -41,13 +45,14 @@ export default function EntriesPage() {
   const userId = session.user.id;
 
   const [entries, setEntries] = React.useState<EntryWithCategory[]>([]);
-  const [accountNames, setAccountNames] = React.useState<Map<string, string>>(new Map());
+  const [accounts, setAccounts] = React.useState<Tables<"accounts">[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
 
   const [month, setMonth] = React.useState("all");
   const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
   const [categoryFilter, setCategoryFilter] = React.useState("all");
+  const [accountFilter, setAccountFilter] = React.useState("all");
 
   const [addOpen, setAddOpen] = React.useState(false);
   const [addType, setAddType] = React.useState<"income" | "expense">("expense");
@@ -63,25 +68,27 @@ export default function EntriesPage() {
     async function load() {
       const [entryRes, accRes] = await Promise.all([
         supabase
-          .from("quick_entries")
+          .from("transactions")
           .select("*, categories(*)")
           .eq("household_id", householdId)
-          .order("entry_date", { ascending: false })
+          // Income and expense only. `neq("type", "transfer")` would still let a
+          // future type through; naming the two we want will not.
+          .in("type", ["income", "expense"])
+          .eq("is_opening", false)
+          .order("date", { ascending: false })
           .order("created_at", { ascending: false }),
         supabase
           .from("accounts")
-          .select("id, name")
-          .eq("household_id", householdId),
+          .select("*")
+          .eq("household_id", householdId)
+          .eq("is_archived", false)
+          .is("deleted_at", null)
+          .order("created_at"),
       ]);
 
       if (!active) return;
-
-      if (entryRes.data) {
-        setEntries(entryRes.data as unknown as EntryWithCategory[]);
-      }
-      if (accRes.data) {
-        setAccountNames(new Map(accRes.data.map((a) => [a.id, a.name])));
-      }
+      if (entryRes.data) setEntries(entryRes.data as unknown as EntryWithCategory[]);
+      if (accRes.data) setAccounts(accRes.data);
       setLoading(false);
     }
 
@@ -91,48 +98,17 @@ export default function EntriesPage() {
     };
   }, [householdId, supabase, refreshKey]);
 
-  // Which account each linked entry points at, for the row badge. One extra
-  // query rather than a join, because the FK direction is entry -> transaction
-  // and PostgREST cannot follow it to accounts in a single select.
-  const [txAccount, setTxAccount] = React.useState<Map<string, string>>(new Map());
-  const linkedIds = React.useMemo(
-    () => entries.map((e) => e.linked_transaction_id).filter(Boolean) as string[],
-    [entries],
+  const accountById = React.useMemo(
+    () => new Map(accounts.map((a) => [a.id, a])),
+    [accounts],
   );
-  const linkedKey = linkedIds.join(",");
-
-  React.useEffect(() => {
-    if (linkedIds.length === 0) return;
-    let active = true;
-
-    supabase
-      .from("transactions")
-      .select("id, account_id")
-      .in("id", linkedIds)
-      .then(({ data }) => {
-        if (active && data) {
-          setTxAccount(new Map(data.map((t) => [t.id, t.account_id])));
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [linkedKey, supabase]);
-
-  const linkedAccountName = (entry: EntryWithCategory): string | null => {
-    if (!entry.linked_transaction_id) return null;
-    const accId = txAccount.get(entry.linked_transaction_id);
-    return accId ? accountNames.get(accId) ?? "Linked" : "Linked";
-  };
 
   // ---- Filters -------------------------------------------------------------
 
   const monthOptions: SelectOption[] = React.useMemo(() => {
     const seen = new Map<string, string>();
     for (const e of entries) {
-      const key = e.entry_date.slice(0, 7);
+      const key = e.date.slice(0, 7);
       if (!seen.has(key)) {
         seen.set(
           key,
@@ -166,59 +142,63 @@ export default function EntriesPage() {
     ];
   }, [entries]);
 
+  const accountOptions: SelectOption[] = React.useMemo(
+    () => [
+      { value: "all", label: "All accounts" },
+      ...accounts.map((a) => ({ value: a.id, label: a.name })),
+    ],
+    [accounts],
+  );
+
   const filtered = React.useMemo(
     () =>
       entries.filter((e) => {
-        if (month !== "all" && !e.entry_date.startsWith(month)) return false;
+        if (month !== "all" && !e.date.startsWith(month)) return false;
         if (typeFilter !== "all" && e.type !== typeFilter) return false;
-        if (categoryFilter !== "all" && (e.category_id ?? e.category) !== categoryFilter)
-          return false;
+        if (categoryFilter !== "all" && e.category_id !== categoryFilter) return false;
+        if (accountFilter !== "all" && e.account_id !== accountFilter) return false;
         return true;
       }),
-    [entries, month, typeFilter, categoryFilter],
+    [entries, month, typeFilter, categoryFilter, accountFilter],
   );
 
-  // ---- Totals, from entries only ------------------------------------------
+  // ---- Totals --------------------------------------------------------------
 
   const totals = React.useMemo(() => {
     let income = 0;
     let expense = 0;
-    // NET, not a sum of unsigned amounts: adding Rs 35,000 of salary to Rs 1,000
-    // of groceries produces a number that measures nothing.
-    let unlinkedIn = 0;
-    let unlinkedOut = 0;
     for (const e of filtered) {
+      // SIGNED column: income positive, expense negative, by constraint.
       const amt = Number(e.amount_paisa);
-      if (e.type === "income") income += amt;
-      else expense += amt;
-      if (!e.linked_transaction_id) {
-        if (e.type === "income") unlinkedIn += amt;
-        else unlinkedOut += amt;
-      }
+      if (amt >= 0) income += amt;
+      else expense += Math.abs(amt);
     }
-    return {
-      income,
-      expense,
-      unlinked: unlinkedIn - unlinkedOut,
-      net: income - expense,
-    };
+    return { income, expense, net: income - expense };
   }, [filtered]);
 
-  const unlinkedCount = filtered.filter((e) => !e.linked_transaction_id).length;
+  /*
+   * What you actually hold, straight off the accounts.
+   *
+   * This replaces the old "Not linked, net" tile, which netted income against
+   * expense across entries that belonged to no account — a figure describing
+   * money that existed nowhere. Every entry now moves one of these balances, so
+   * this tile is the same number the Accounts page shows and the two screens
+   * finally agree.
+   */
+  const heldPaisa = React.useMemo(
+    () => accounts.reduce((sum, a) => sum + Number(a.balance_paisa), 0),
+    [accounts],
+  );
 
-  const handleDelete = async (cascade: boolean) => {
+  const handleDelete = async () => {
     if (!deleting) return;
     try {
-      await deleteQuickEntry(supabase, deleting, cascade);
+      await deleteMovement(supabase, deleting.id);
+      const accountName = accountById.get(deleting.account_id)?.name;
       showToast({
         type: "success",
         title: "Entry deleted",
-        description:
-          deleting.linked_transaction_id && cascade
-            ? "The linked transaction was deleted too."
-            : deleting.linked_transaction_id
-              ? "The linked transaction was kept and unlinked."
-              : undefined,
+        description: accountName ? `${accountName} has been re-settled.` : undefined,
       });
       setDeleting(null);
       reload();
@@ -231,8 +211,6 @@ export default function EntriesPage() {
     }
   };
 
-  const deletingAccountName = deleting ? linkedAccountName(deleting) : null;
-
   return (
     <div className="space-y-6">
       <header className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -241,8 +219,8 @@ export default function EntriesPage() {
             Entries
           </h1>
           <p className="text-muted mt-0.5 text-[12.5px]">
-            Your daily income and expense log. Figures here come from entries only —
-            account balances live in Accounts.
+            Every rupee in and out, cash included. Each entry moves one of your
+            accounts, so these figures reconcile with Accounts.
           </p>
         </div>
 
@@ -272,20 +250,19 @@ export default function EntriesPage() {
         </div>
       </header>
 
-      {/* Blocks — entry data only */}
       <Reveal index={0}>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <StatCard
             label="Logged in"
             valuePaisa={totals.income}
             tone="gain"
-            footnote={`${filtered.filter((e) => e.type === "income").length} entries`}
+            footnote={`${filtered.filter((e) => Number(e.amount_paisa) >= 0).length} entries`}
           />
           <StatCard
             label="Logged out"
             valuePaisa={totals.expense}
             tone="loss"
-            footnote={`${filtered.filter((e) => e.type === "expense").length} entries`}
+            footnote={`${filtered.filter((e) => Number(e.amount_paisa) < 0).length} entries`}
           />
           <StatCard
             label="Net logged"
@@ -294,22 +271,17 @@ export default function EntriesPage() {
             footnote="in minus out"
           />
           <StatCard
-            label="Not linked, net"
-            valuePaisa={totals.unlinked}
+            label="Held now"
+            valuePaisa={heldPaisa}
             tone="neutral"
-            footnote={
-              unlinkedCount === 0
-                ? "every entry is linked to an account"
-                : `${unlinkedCount} standalone · not in net worth`
-            }
-            icon={<Link2Off size={13} />}
+            footnote={`across ${accounts.length} account${accounts.length === 1 ? "" : "s"}`}
+            icon={<Wallet size={13} />}
           />
         </div>
       </Reveal>
 
-      {/* Filters */}
       <Reveal index={1}>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <RichSelect value={month} onChange={setMonth} options={monthOptions} />
           <RichSelect
             value={typeFilter}
@@ -325,10 +297,14 @@ export default function EntriesPage() {
             onChange={setCategoryFilter}
             options={categoryOptions}
           />
+          <RichSelect
+            value={accountFilter}
+            onChange={setAccountFilter}
+            options={accountOptions}
+          />
         </div>
       </Reveal>
 
-      {/* The log */}
       <Reveal index={2}>
         <Panel
           title="All entries"
@@ -347,8 +323,8 @@ export default function EntriesPage() {
                 title={entries.length === 0 ? "No entries yet" : "Nothing matches these filters"}
                 description={
                   entries.length === 0
-                    ? "Log your first income or expense. Entries stay independent unless you link them to an account."
-                    : "Try a different month, type or category."
+                    ? "Log your first income or expense. It defaults to cash, and moves that balance straight away."
+                    : "Try a different month, type, category or account."
                 }
                 action={
                   entries.length === 0 ? (
@@ -373,17 +349,17 @@ export default function EntriesPage() {
                 <EntryRow
                   key={entry.id}
                   entry={entry}
-                  linkedAccountName={linkedAccountName(entry)}
+                  accountName={accountById.get(entry.account_id)?.name ?? null}
                   onEdit={() => {
+                    const amt = Number(entry.amount_paisa);
                     setEditing({
                       id: entry.id,
-                      type: entry.type,
-                      amount_paisa: Number(entry.amount_paisa),
-                      category: entry.category,
+                      type: amt >= 0 ? "income" : "expense",
+                      amount_paisa: Math.abs(amt),
                       category_id: entry.category_id,
                       note: entry.note,
-                      entry_date: entry.entry_date,
-                      linked_transaction_id: entry.linked_transaction_id,
+                      entry_date: entry.date,
+                      account_id: entry.account_id,
                     });
                     setAddOpen(true);
                   }}
@@ -408,6 +384,11 @@ export default function EntriesPage() {
         onSuccess={reload}
       />
 
+      {/*
+        No cascade choice any more. There is one row, so deleting it deletes the
+        movement and the balance trigger re-settles the account — there is no
+        second copy that could survive and keep the money deducted.
+      */}
       <ConfirmDeleteModal
         isOpen={deleting !== null}
         onClose={() => setDeleting(null)}
@@ -415,23 +396,13 @@ export default function EntriesPage() {
         title="Delete this entry?"
         recordLabel={
           deleting
-            ? `${deleting.note?.trim() || deleting.categories?.name || deleting.category} · ${formatPKR(deleting.amount_paisa)}`
+            ? `${deleting.note?.trim() || deleting.categories?.name || "Entry"} · ${formatPKR(Math.abs(Number(deleting.amount_paisa)))}`
             : ""
         }
         recordMeta={
           deleting
-            ? `${deleting.type === "income" ? "Income" : "Expense"} · ${deleting.entry_date}`
+            ? `${Number(deleting.amount_paisa) >= 0 ? "Income" : "Expense"} · ${deleting.date} · ${accountById.get(deleting.account_id)?.name ?? "Account"}`
             : undefined
-        }
-        linkedRefs={
-          deleting?.linked_transaction_id
-            ? [
-                {
-                  kind: "Transaction",
-                  label: `${deletingAccountName ?? "Account"} · ${formatPKR(deleting.amount_paisa)}`,
-                },
-              ]
-            : []
         }
         confirmLabel="Delete entry"
       />

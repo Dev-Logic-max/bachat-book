@@ -13,6 +13,12 @@ export interface SelectOption {
   description?: string;
   /** Optional group heading — used to render categories parent → child. */
   group?: string;
+  /**
+   * Trailing status shown at the right edge of the row (e.g. "2 accounts").
+   * Purely informational — it must never imply the option is unavailable, so it
+   * sits alongside the tick rather than replacing it and does not set `disabled`.
+   */
+  meta?: React.ReactNode;
   disabled?: boolean;
 }
 
@@ -221,6 +227,14 @@ export function RichSelect({
     switch (e.key) {
       case "Escape":
         e.preventDefault();
+        /*
+         * Escape here dismisses the LIST, not whatever contains it. Modal listens
+         * for Escape on `window`; without this the keypress kept travelling and
+         * closed the entire Add Account dialog, throwing away a part-filled form
+         * because the user wanted to back out of a dropdown.
+         */
+        e.stopPropagation();
+        e.nativeEvent.stopImmediatePropagation();
         close();
         return;
       case "Tab":
@@ -353,8 +367,23 @@ export function RichSelect({
             style={{
               position: "fixed",
               top: rect.bottom + 6,
-              left: rect.left,
-              width: rect.width,
+              /*
+               * The list may be WIDER than its trigger. Locked to `rect.width` it
+               * inherited the trigger's column, and a half-width control such as
+               * Account Type truncated every label it was meant to explain
+               * ("Savings / Asaan acco…"). It is still clamped to the viewport and
+               * nudged back inside if that overflows the right edge.
+               */
+              ...(() => {
+                const w = Math.min(
+                  Math.max(rect.width, 264),
+                  window.innerWidth - 16,
+                );
+                return {
+                  width: w,
+                  left: Math.min(Math.max(8, rect.left), window.innerWidth - w - 8),
+                };
+              })(),
               // Never taller than the gap to the viewport bottom, so the last
               // option is always reachable on a short mobile screen.
               maxHeight: Math.max(160, window.innerHeight - rect.bottom - 24),
@@ -433,9 +462,12 @@ export function RichSelect({
                         )}
                       </span>
                     </span>
-                    {isSelected && (
-                      <Check size={14} className="text-brass-strong shrink-0" />
-                    )}
+                    <span className="flex shrink-0 items-center gap-2">
+                      {opt.meta}
+                      {isSelected && (
+                        <Check size={14} className="text-brass-strong" />
+                      )}
+                    </span>
                   </button>
                 );
               })

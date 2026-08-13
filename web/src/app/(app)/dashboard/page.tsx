@@ -21,7 +21,7 @@ import { QuickTaskModal } from "@/components/quick-task-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
-import { deleteQuickEntry } from "@/lib/ledger-actions";
+import { deleteMovement } from "@/lib/ledger-actions";
 import { monthBounds, netWorthSeries, rangePoints } from "@/lib/ledger";
 import { formatHijri, formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -56,7 +56,12 @@ export default function DashboardPage() {
   const [tasks, setTasks] = React.useState<Tables<"tasks">[]>([]);
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [transactions, setTransactions] = React.useState<
-    Array<Pick<Tables<"transactions">, "id" | "date" | "amount_paisa" | "account_id">>
+    Array<
+      Pick<
+        Tables<"transactions">,
+        "id" | "date" | "amount_paisa" | "account_id" | "type" | "is_opening"
+      >
+    >
   >([]);
 
   const [range, setRange] = React.useState<RangeKey>("6M");
@@ -70,11 +75,15 @@ export default function DashboardPage() {
 
     async function load() {
       const [entriesRes, tasksRes, accountsRes, txRes] = await Promise.all([
+        // Entries = income and expense from the single ledger. Transfers and
+        // opening balances are excluded: neither is money earned or spent.
         supabase
-          .from("quick_entries")
+          .from("transactions")
           .select("*, categories(*)")
           .eq("household_id", householdId)
-          .order("entry_date", { ascending: false })
+          .in("type", ["income", "expense"])
+          .eq("is_opening", false)
+          .order("date", { ascending: false })
           .order("created_at", { ascending: false })
           .limit(200),
         supabase
@@ -89,10 +98,11 @@ export default function DashboardPage() {
           .select("*, institutions(*)")
           .eq("household_id", householdId)
           .eq("is_archived", false)
+          .is("deleted_at", null)
           .order("balance_paisa", { ascending: false }),
         supabase
           .from("transactions")
-          .select("id, date, amount_paisa, account_id")
+          .select("id, date, amount_paisa, account_id, type, is_opening")
           .eq("household_id", householdId)
           .order("date", { ascending: false }),
       ]);
@@ -136,6 +146,16 @@ export default function DashboardPage() {
     let outflow = 0;
     for (const t of transactions) {
       if (t.date < monthFrom || t.date > monthTo) continue;
+      /*
+       * Transfers and opening balances are NOT flow.
+       *
+       * A transfer is two legs that cancel, so summing both added the same
+       * rupees to inflow AND outflow — an ATM withdrawal of Rs 20,000 read as
+       * "Rs 20,000 in, Rs 20,000 out" for money that never left the household.
+       * An opening balance is the position an account started at, so counting
+       * it made the Rs 36,500 already sitting in the accounts look like income.
+       */
+      if (t.type === "transfer" || t.is_opening) continue;
       const amt = Number(t.amount_paisa);
       if (amt >= 0) inflow += amt;
       else outflow += Math.abs(amt);
@@ -144,26 +164,25 @@ export default function DashboardPage() {
   }, [transactions, monthFrom, monthTo]);
 
   /*
-   * Quick-log figures come from quick_entries alone.
+   * Entry figures — income and expense only, from the same ledger.
    *
-   * `logged` is a NET figure (in minus out). Summing the raw unsigned amounts
-   * added income and expense together — Rs 35,000 salary plus Rs 2,000 of spending
-   * came out as "Rs 37,000 logged", which is not a quantity of anything.
+   * A NET figure (in minus out). Summing the raw magnitudes added income and
+   * expense together: Rs 35,000 salary plus Rs 2,000 of spending came out as
+   * "Rs 37,000 logged", which is not a quantity of anything.
    */
   const quickLog = React.useMemo(() => {
     let inflow = 0;
     let outflow = 0;
-    let unlinkedCount = 0;
     let count = 0;
     for (const e of entries) {
-      if (e.entry_date < monthFrom || e.entry_date > monthTo) continue;
+      if (e.date < monthFrom || e.date > monthTo) continue;
+      // SIGNED column: income positive, expense negative, by constraint.
       const amt = Number(e.amount_paisa);
-      if (e.type === "income") inflow += amt;
-      else outflow += amt;
+      if (amt >= 0) inflow += amt;
+      else outflow += Math.abs(amt);
       count += 1;
-      if (!e.linked_transaction_id) unlinkedCount += 1;
     }
-    return { net: inflow - outflow, unlinkedCount, count };
+    return { net: inflow - outflow, count };
   }, [entries, monthFrom, monthTo]);
 
   const series = React.useMemo(() => {
@@ -193,16 +212,9 @@ export default function DashboardPage() {
     () => new Map(accounts.map((a) => [a.id, a.name])),
     [accounts],
   );
-  const txAccount = React.useMemo(
-    () => new Map(transactions.map((t) => [t.id, t.account_id])),
-    [transactions],
-  );
-
-  const linkedAccountName = (entry: EntryWithCategory): string | null => {
-    if (!entry.linked_transaction_id) return null;
-    const accId = txAccount.get(entry.linked_transaction_id);
-    return accId ? accountNames.get(accId) ?? "Linked" : "Linked";
-  };
+  // Every entry names its account directly now — no lookup through a link.
+  const entryAccountName = (entry: EntryWithCategory): string | null =>
+    accountNames.get(entry.account_id) ?? null;
 
   const recentEntries = entries.slice(0, 8);
 
@@ -219,19 +231,14 @@ export default function DashboardPage() {
     router.push(q ? `/transactions?q=${encodeURIComponent(q)}` : "/transactions");
   };
 
-  const handleDeleteEntry = async (cascade: boolean) => {
+  const handleDeleteEntry = async () => {
     if (!deletingEntry) return;
     try {
-      await deleteQuickEntry(supabase, deletingEntry, cascade);
+      await deleteMovement(supabase, deletingEntry.id);
       showToast({
         type: "success",
         title: "Entry deleted",
-        description:
-          deletingEntry.linked_transaction_id && cascade
-            ? "The linked transaction was deleted too."
-            : deletingEntry.linked_transaction_id
-              ? "The linked transaction was kept and unlinked."
-              : undefined,
+        description: `${entryAccountName(deletingEntry) ?? "The account"} has been re-settled.`,
       });
       setDeletingEntry(null);
       reload();
@@ -420,17 +427,17 @@ export default function DashboardPage() {
                   <EntryRow
                     key={entry.id}
                     entry={entry}
-                    linkedAccountName={linkedAccountName(entry)}
+                    accountName={entryAccountName(entry)}
                     onEdit={() => {
+                      const amt = Number(entry.amount_paisa);
                       setEditingEntry({
                         id: entry.id,
-                        type: entry.type,
-                        amount_paisa: Number(entry.amount_paisa),
-                        category: entry.category,
+                        type: amt >= 0 ? "income" : "expense",
+                        amount_paisa: Math.abs(amt),
                         category_id: entry.category_id,
                         note: entry.note,
-                        entry_date: entry.entry_date,
-                        linked_transaction_id: entry.linked_transaction_id,
+                        entry_date: entry.date,
+                        account_id: entry.account_id,
                       });
                       setAddModalOpen(true);
                     }}
@@ -533,23 +540,13 @@ export default function DashboardPage() {
         title="Delete this entry?"
         recordLabel={
           deletingEntry
-            ? `${deletingEntry.note?.trim() || deletingEntry.categories?.name || deletingEntry.category} · ${formatPKR(deletingEntry.amount_paisa)}`
+            ? `${deletingEntry.note?.trim() || deletingEntry.categories?.name || "Entry"} · ${formatPKR(Math.abs(Number(deletingEntry.amount_paisa)))}`
             : ""
         }
         recordMeta={
           deletingEntry
-            ? `${deletingEntry.type === "income" ? "Income" : "Expense"} · ${deletingEntry.entry_date}`
+            ? `${Number(deletingEntry.amount_paisa) >= 0 ? "Income" : "Expense"} · ${deletingEntry.date} · ${entryAccountName(deletingEntry) ?? "Account"}`
             : undefined
-        }
-        linkedRefs={
-          deletingEntry?.linked_transaction_id
-            ? [
-                {
-                  kind: "Transaction",
-                  label: `${linkedAccountName(deletingEntry) ?? "Account"} · ${formatPKR(deletingEntry.amount_paisa)}`,
-                },
-              ]
-            : []
         }
         confirmLabel="Delete entry"
       />
@@ -571,7 +568,7 @@ function buildContextSlot({
   openTasks,
   isFiler,
 }: {
-  quickLog: { net: number; unlinkedCount: number; count: number };
+  quickLog: { net: number; count: number };
   openTasks: number;
   isFiler: boolean;
 }) {
@@ -581,10 +578,7 @@ function buildContextSlot({
       kpi: {
         label: "Quick log, net",
         valuePaisa: quickLog.net,
-        footnote:
-          quickLog.unlinkedCount > 0
-            ? `${quickLog.count} entries · ${quickLog.unlinkedCount} not linked to an account`
-            : `${quickLog.count} entries this month`,
+        footnote: `${quickLog.count} entries this month`,
         href: "/entries",
       },
     },

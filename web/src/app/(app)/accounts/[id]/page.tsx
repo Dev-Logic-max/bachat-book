@@ -5,11 +5,13 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import {
   ArrowLeft,
-  Landmark,
-  Link2Off,
-  Search,
-  ArrowUpRight,
   ArrowDownRight,
+  ArrowUpRight,
+  Landmark,
+  Lock,
+  PowerOff,
+  Search,
+  Trash2,
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
@@ -20,7 +22,7 @@ import { EditAccountModal } from "@/components/edit-account-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
-import { deleteTransaction, findLinkedEntry } from "@/lib/ledger-actions";
+import { deleteMovement, deleteTransfer } from "@/lib/ledger-actions";
 import { ACCOUNT_TYPE_LABEL, PAYMENT_METHOD_LABEL } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 import type { Tables } from "@/lib/supabase/types";
@@ -48,9 +50,6 @@ export default function AccountDetailPage() {
 
   const [account, setAccount] = React.useState<AccountDetail | null>(null);
   const [transactions, setTransactions] = React.useState<TransactionWithRelations[]>([]);
-  const [linkedEntryIds, setLinkedEntryIds] = React.useState<Map<string, string>>(
-    new Map(),
-  );
   const [loading, setLoading] = React.useState(true);
   const [search, setSearch] = React.useState("");
   const [refreshKey, setRefreshKey] = React.useState(0);
@@ -60,11 +59,6 @@ export default function AccountDetailPage() {
   const [deletingTx, setDeletingTx] = React.useState<TransactionWithRelations | null>(
     null,
   );
-  const [deletingLinkedEntry, setDeletingLinkedEntry] = React.useState<{
-    id: string;
-    amount_paisa: number;
-    note: string | null;
-  } | null>(null);
 
   const reload = () => setRefreshKey((k) => k + 1);
 
@@ -89,26 +83,9 @@ export default function AccountDetailPage() {
           .order("created_at", { ascending: false }),
       ]);
 
-      // Which of these transactions are synced to a quick entry. The FK lives on
-      // quick_entries, so this cannot be a join from the transaction side.
-      const txIds = (txRes.data ?? []).map((t) => t.id);
-      const entryRes = txIds.length
-        ? await supabase
-            .from("quick_entries")
-            .select("id, linked_transaction_id")
-            .in("linked_transaction_id", txIds)
-        : { data: [] as Array<{ id: string; linked_transaction_id: string | null }> };
-
       if (active) {
         if (accRes.data) setAccount(accRes.data as unknown as AccountDetail);
         if (txRes.data) setTransactions(txRes.data as unknown as TransactionWithRelations[]);
-        setLinkedEntryIds(
-          new Map(
-            (entryRes.data ?? [])
-              .filter((e) => e.linked_transaction_id)
-              .map((e) => [e.linked_transaction_id as string, e.id]),
-          ),
-        );
         setLoading(false);
       }
     }
@@ -119,32 +96,31 @@ export default function AccountDetailPage() {
     };
   }, [accountId, householdId, supabase, refreshKey]);
 
-  const openDelete = async (tx: TransactionWithRelations) => {
-    const linked = await findLinkedEntry(supabase, tx.id);
-    setDeletingLinkedEntry(linked);
-    setDeletingTx(tx);
-  };
+  // No lookup needed any more — the row carries everything the dialog names.
+  const openDelete = (tx: TransactionWithRelations) => setDeletingTx(tx);
 
-  const handleDeleteTx = async (cascade: boolean) => {
+  const handleDeleteTx = async () => {
     if (!deletingTx) return;
     try {
-      await deleteTransaction(
-        supabase,
-        deletingTx.id,
-        deletingLinkedEntry?.id ?? null,
-        cascade,
-      );
+      // A transfer is two rows and must go as a pair; anything else is one row.
+      if (deletingTx.type === "transfer") {
+        await deleteTransfer(
+          supabase,
+          deletingTx.id,
+          deletingTx.linked_transaction_id,
+        );
+      } else {
+        await deleteMovement(supabase, deletingTx.id);
+      }
       showToast({
         type: "success",
-        title: "Transaction deleted",
-        description: deletingLinkedEntry
-          ? cascade
-            ? "The linked entry was deleted too."
-            : "The linked entry was kept and unlinked."
-          : "Account balance recalculated.",
+        title: deletingTx.type === "transfer" ? "Transfer deleted" : "Transaction deleted",
+        description:
+          deletingTx.type === "transfer"
+            ? "Both sides were removed and the balances re-settled."
+            : "Account balance recalculated.",
       });
       setDeletingTx(null);
-      setDeletingLinkedEntry(null);
       reload();
     } catch (err) {
       showToast({
@@ -245,12 +221,27 @@ export default function AccountDetailPage() {
               <span className="bg-surface-subtle text-foreground border-border rounded-full border px-2 py-0.5 text-[10px] font-medium">
                 {ACCOUNT_TYPE_LABEL[account.type] ?? account.type}
               </span>
-              {!account.allow_entry_link && (
-                <span className="bg-surface-subtle text-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium">
-                  <Link2Off size={10} />
-                  Independent
+              {/*
+                State is stated, never inferred from an empty screen. A deleted
+                account still has its whole ledger below; without a tag the page
+                looks like an ordinary account you can go on using.
+              */}
+              {account.deleted_at ? (
+                <span className="bg-loss-soft text-loss inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium">
+                  <Trash2 size={10} />
+                  Deleted
                 </span>
-              )}
+              ) : account.is_archived ? (
+                <span className="bg-surface-subtle text-muted border-border inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium">
+                  <PowerOff size={10} />
+                  Deactivated
+                </span>
+              ) : account.is_locked ? (
+                <span className="bg-brass-soft text-brass-strong inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium">
+                  <Lock size={10} />
+                  Locked — savings only
+                </span>
+              ) : null}
             </div>
             <p className="text-muted text-xs mt-0.5">
               {inst?.name || "Cash / Direct Holding"}{" "}
@@ -355,7 +346,11 @@ export default function AccountDetailPage() {
                           >
                             {kindLabel}
                           </span>
-                          {linkedEntryIds.has(tx.id) && (
+                          {tx.type === "transfer" ? (
+                            <LinkBadge label="Transfer" />
+                          ) : tx.is_opening ? (
+                            <LinkBadge label="Opening" />
+                          ) : (
                             <LinkBadge label="Entry" href="/entries" />
                           )}
                         </div>
@@ -423,10 +418,7 @@ export default function AccountDetailPage() {
 
       <ConfirmDeleteModal
         isOpen={deletingTx !== null}
-        onClose={() => {
-          setDeletingTx(null);
-          setDeletingLinkedEntry(null);
-        }}
+        onClose={() => setDeletingTx(null)}
         onConfirm={handleDeleteTx}
         title="Delete this ledger entry?"
         recordLabel={
@@ -440,11 +432,11 @@ export default function AccountDetailPage() {
             : undefined
         }
         linkedRefs={
-          deletingLinkedEntry
+          deletingTx?.type === "transfer"
             ? [
                 {
-                  kind: "Quick entry",
-                  label: `${deletingLinkedEntry.note || "Entry"} · ${formatPKR(deletingLinkedEntry.amount_paisa)}`,
+                  kind: "Other side of the transfer",
+                  label: "Deleted together — one leg alone would create money",
                 },
               ]
             : []

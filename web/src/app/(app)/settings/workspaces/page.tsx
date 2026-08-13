@@ -186,8 +186,19 @@ export default function WorkspacesSettingsPage() {
         onClose={() => setCreateModalOpen(false)}
         title="Create New Workspace"
         subtitle="Separate your personal, family, or business transactions"
+        onSubmit={handleCreateWorkspace}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setCreateModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Create Workspace
+            </Button>
+          </>
+        }
       >
-        <form onSubmit={handleCreateWorkspace} className="space-y-4 pt-2">
+        <div className="space-y-4">
           <Input
             label="Workspace Name"
             placeholder="e.g. Khan Household / Freelance Agency"
@@ -208,15 +219,7 @@ export default function WorkspacesSettingsPage() {
             ]}
           />
 
-          <div className="flex justify-end gap-2 pt-2">
-            <Button type="button" variant="ghost" onClick={() => setCreateModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Create Workspace
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

@@ -3,6 +3,7 @@
 import * as React from "react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
@@ -79,8 +80,19 @@ export function QuickTaskModal({
       onClose={onClose}
       title="Add Task"
       subtitle="Create a financial to-do or reminder"
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={loading}>
+            Create Task
+          </Button>
+        </>
+      }
     >
-      <form onSubmit={handleSubmit} className="space-y-4 pt-2">
+      <div className="space-y-4">
         <Input
           label="Task Description"
           placeholder="e.g. Pay electricity bill / Submit tax file"
@@ -91,11 +103,10 @@ export function QuickTaskModal({
         />
 
         <div className="grid grid-cols-2 gap-3">
-          <Input
+          <DatePicker
             label="Due Date"
-            type="date"
             value={dueDate}
-            onChange={(e) => setDueDate(e.target.value)}
+            onChange={setDueDate}
             required
           />
 
@@ -114,15 +125,7 @@ export function QuickTaskModal({
           onChange={(e) => setLinkedLabel(e.target.value)}
         />
 
-        <div className="flex items-center justify-end gap-2 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={loading}>
-            Create Task
-          </Button>
-        </div>
-      </form>
+      </div>
     </Modal>
   );
 }

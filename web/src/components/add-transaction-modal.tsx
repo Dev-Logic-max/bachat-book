@@ -3,26 +3,44 @@
 import * as React from "react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { RichSelect } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { CategoryIcon } from "@/components/category-icon";
+import { MerchantMark } from "@/components/merchant-mark";
+import { accountSelectOptions } from "@/components/account-options";
+import type { AccountWithInstitution } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
+import { BANKING_ACCOUNT_TYPES, groupCategories, todayISO } from "@/lib/ledger";
+import { formatPKR } from "@/lib/format";
+import type { SelectOption } from "@/components/ui/select";
 import type { Tables } from "@/lib/supabase/types";
 
 interface AddTransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
   householdId: string;
+  userId: string;
   onSuccess?: () => void;
 }
 
+/**
+ * The Transactions door into the single ledger.
+ *
+ * Writes exactly the same row the Entries form writes — there is one table. The
+ * only difference is which accounts it offers: this screen shows bank and wallet
+ * movement, so logging a CASH expense here would save a row that then vanished
+ * from the list that created it. Cash belongs on Entries.
+ */
 export function AddTransactionModal({
   isOpen,
   onClose,
   householdId,
+  userId,
   onSuccess,
 }: AddTransactionModalProps) {
-  const [accounts, setAccounts] = React.useState<Tables<"accounts">[]>([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
   const [merchants, setMerchants] = React.useState<Tables<"merchants">[]>([]);
 
@@ -32,7 +50,8 @@ export function AddTransactionModal({
   const [categoryId, setCategoryId] = React.useState("");
   const [merchantId, setMerchantId] = React.useState("none");
   const [note, setNote] = React.useState("");
-  const [date, setDate] = React.useState(() => new Date().toISOString().split("T")[0]);
+  // Local date. toISOString() is UTC and lands on yesterday before 05:00 PKT.
+  const [date, setDate] = React.useState(todayISO);
   const [loading, setLoading] = React.useState(false);
 
   const { showToast } = useToast();
@@ -44,14 +63,20 @@ export function AddTransactionModal({
 
     async function loadData() {
       const [accRes, catRes, merRes] = await Promise.all([
-        supabase.from("accounts").select("*").eq("household_id", householdId).eq("is_archived", false),
+        supabase
+          .from("accounts")
+          .select("*, institutions(*)")
+          .eq("household_id", householdId)
+          .eq("is_archived", false)
+          .is("deleted_at", null)
+          .in("type", [...BANKING_ACCOUNT_TYPES]),
         supabase.from("categories").select("*").order("name", { ascending: true }),
         supabase.from("merchants").select("*").order("name", { ascending: true }),
       ]);
 
       if (active) {
         if (accRes.data) {
-          setAccounts(accRes.data);
+          setAccounts(accRes.data as unknown as AccountWithInstitution[]);
           if (accRes.data.length > 0 && !accountId) setAccountId(accRes.data[0].id);
         }
         if (catRes.data) {
@@ -95,6 +120,7 @@ export function AddTransactionModal({
       type,
       date,
       note: note.trim() || null,
+      created_by: userId,
     });
 
     setLoading(false);
@@ -107,7 +133,7 @@ export function AddTransactionModal({
     showToast({
       type: "success",
       title: `${type === "income" ? "Income" : "Expense"} Recorded`,
-      description: `Rs ${parsed.toLocaleString()} logged cleanly.`,
+      description: `Rs ${parsed.toLocaleString()} — the account balance has moved.`,
     });
 
     setAmount("");
@@ -116,29 +142,62 @@ export function AddTransactionModal({
     if (onSuccess) onSuccess();
   };
 
-  const accountOptions = accounts.map((acc) => ({
-    value: acc.id,
-    label: `${acc.name} (${acc.type})`,
-  }));
+  const accountOptions = accountSelectOptions(accounts, { direction: type });
 
-  const filteredCategories = categories.filter((c) => (type === "income" ? c.kind === "income" : c.kind !== "income"));
+  // Parent-first with children grouped underneath. A flat alphabetical list of
+  // 37 puts "Electricity" between "Education" and "Entertainment" with nothing
+  // to say one is a bill and the others are not.
+  const categoryOptions: SelectOption[] = groupCategories(categories, type).map(
+    ({ category, groupLabel }) => ({
+      value: category.id,
+      label: category.name,
+      group: groupLabel,
+      icon: <CategoryIcon icon={category.icon} size={15} />,
+    }),
+  );
 
-  const categoryOptions = filteredCategories.map((c) => ({
-    value: c.id,
-    label: c.name,
-  }));
-
-  const merchantOptions = [
-    { value: "none", label: "None / Manual Merchant" },
+  const merchantOptions: SelectOption[] = [
+    { value: "none", label: "No merchant", description: "Type it in the note instead" },
     ...merchants.map((m) => ({
       value: m.id,
       label: m.name,
+      icon: (
+        <MerchantMark
+          name={m.name}
+          brand={m.brand_color}
+          logo={m.logo_path ?? undefined}
+          awaitingLogo={!m.logo_path}
+          size={22}
+        />
+      ),
     })),
   ];
 
+  const selectedAccount = accounts.find((a) => a.id === accountId);
+  const amountPaisaPreview = Math.round((parseFloat(amount) || 0) * 100);
+  const projected = selectedAccount
+    ? Number(selectedAccount.balance_paisa) +
+      (type === "income" ? amountPaisaPreview : -amountPaisaPreview)
+    : null;
+
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Log Transaction">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Log Transaction"
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={loading}>
+            Save Transaction
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
         {/* Type Toggle */}
         <div className="grid grid-cols-2 gap-2 p-1 bg-surface-subtle border border-border rounded-control">
           <button
@@ -165,11 +224,20 @@ export function AddTransactionModal({
           </button>
         </div>
 
-        <Select
+        <RichSelect
           label="Account"
           value={accountId}
-          onChange={(e) => setAccountId(e.target.value)}
+          onChange={setAccountId}
           options={accountOptions}
+          placeholder={accounts.length === 0 ? "Loading accounts…" : "Choose an account"}
+          emptyMessage="Add a bank or wallet account first"
+          hint={
+            selectedAccount && projected !== null && amountPaisaPreview > 0
+              ? `${formatPKR(Number(selectedAccount.balance_paisa))} → ${formatPKR(projected)} after this`
+              : selectedAccount
+                ? `Holds ${formatPKR(Number(selectedAccount.balance_paisa))}`
+                : "Cash spending belongs in Entries — this list is banks and wallets."
+          }
         />
 
         <div className="grid grid-cols-2 gap-3">
@@ -181,29 +249,34 @@ export function AddTransactionModal({
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             required
+            className="tnum"
           />
 
-          <Input
+          <DatePicker
             label="Date"
-            type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={setDate}
+            max={todayISO()}
             required
           />
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <Select
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <RichSelect
             label="Category"
             value={categoryId}
-            onChange={(e) => setCategoryId(e.target.value)}
+            onChange={setCategoryId}
             options={categoryOptions}
+            placeholder={
+              categoryOptions.length === 0 ? "Loading categories…" : "Choose a category"
+            }
+            emptyMessage="No categories for this type"
           />
 
-          <Select
+          <RichSelect
             label="Merchant (Optional)"
             value={merchantId}
-            onChange={(e) => setMerchantId(e.target.value)}
+            onChange={setMerchantId}
             options={merchantOptions}
           />
         </div>
@@ -215,15 +288,7 @@ export function AddTransactionModal({
           onChange={(e) => setNote(e.target.value)}
         />
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-border">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={loading}>
-            Save Transaction
-          </Button>
-        </div>
-      </form>
+      </div>
     </Modal>
   );
 }

@@ -20,7 +20,18 @@ interface ModalProps {
   steps?: ModalStep[];
   currentStepIndex?: number;
   onStepChange?: (index: number) => void;
+  /**
+   * Action row. Rendered in a full-bleed strip pinned below the scrollable body,
+   * mirroring the header — pass the buttons alone, not a wrapper with padding.
+   */
   footer?: React.ReactNode;
+  /**
+   * When given, the body AND the footer are wrapped in a single <form>, so a
+   * `type="submit"` button in `footer` submits the fields in `children` without
+   * needing a `form="…"` id. Passing the buttons through `footer` while leaving
+   * the <form> inside `children` would put them outside the form entirely.
+   */
+  onSubmit?: (e: React.FormEvent<HTMLFormElement>) => void;
 }
 
 export function Modal({
@@ -35,7 +46,10 @@ export function Modal({
   // Reserved for the multi-step flow; the indicator is currently read-only.
   onStepChange: _onStepChange,
   footer,
+  onSubmit,
 }: ModalProps) {
+  const baseId = React.useId();
+
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
@@ -54,6 +68,20 @@ export function Modal({
 
   const hasSteps = steps && steps.length > 0;
   const progressPercent = hasSteps ? ((currentStepIndex + 1) / steps.length) * 100 : 0;
+  const titleId = `${baseId}-modal-title`;
+
+  const shellClass = "flex min-h-0 flex-1 flex-col";
+  const shellBody = (
+    <>
+      <div className="flex-1 overflow-y-auto p-6">{children}</div>
+
+      {footer && (
+        <div className="border-border bg-surface-subtle/50 flex shrink-0 items-center justify-end gap-3 border-t px-6 py-4">
+          {footer}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
@@ -63,15 +91,25 @@ export function Modal({
         onClick={onClose}
       />
 
-      {/* Modal Dialog Shell */}
+      {/*
+        Modal dialog shell.
+
+        role="dialog" + aria-modal is not decoration. Without it a screen reader
+        gives no indication the page behind is inert, and every control on that
+        page still answers to a role query — the fields BEHIND the modal are
+        indistinguishable from the ones inside it.
+      */}
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         className={cn(
           "bg-surface border-border relative z-10 w-full max-w-lg rounded-t-modal border shadow-2xl transition-all sm:rounded-modal flex flex-col max-h-[90vh] overflow-hidden",
           "animate-in fade-in-0 zoom-in-95 duration-150",
         )}
       >
         {/* Header */}
-        <div className="flex flex-col border-b border-border bg-surface-subtle/50 px-6 py-4">
+        <div className="flex shrink-0 flex-col border-b border-border bg-surface-subtle/50 px-6 py-4">
           <div className="flex items-center justify-between gap-4">
             <div className="flex items-center gap-3">
               {icon && (
@@ -80,7 +118,10 @@ export function Modal({
                 </div>
               )}
               <div>
-                <h2 className="font-display text-base font-bold tracking-tight text-foreground">
+                <h2
+                  id={titleId}
+                  className="font-display text-base font-bold tracking-tight text-foreground"
+                >
                   {title}
                 </h2>
                 {subtitle && (
@@ -118,14 +159,17 @@ export function Modal({
           )}
         </div>
 
-        {/* Scrollable Body */}
-        <div className="p-6 overflow-y-auto flex-1">{children}</div>
-
-        {/* Footer (If Provided) */}
-        {footer && (
-          <div className="border-t border-border bg-surface-subtle/30 px-6 py-4 flex items-center justify-between gap-3">
-            {footer}
-          </div>
+        {/*
+          Body + footer share one flex column so the footer is pinned to the
+          bottom edge of the dialog and its rule runs the full width, exactly
+          like the header — it is NOT part of the `p-6` scroll area.
+        */}
+        {onSubmit ? (
+          <form onSubmit={onSubmit} className={shellClass}>
+            {shellBody}
+          </form>
+        ) : (
+          <div className={shellClass}>{shellBody}</div>
         )}
       </div>
     </div>

@@ -179,39 +179,6 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["preferences"]["Insert"]>;
         Relationships: [];
       };
-      quick_entries: {
-        Row: {
-          id: string;
-          user_id: string;
-          household_id: string;
-          type: "income" | "expense";
-          /** UNSIGNED. Direction lives in `type`, unlike transactions.amount_paisa. */
-          amount_paisa: number;
-          /** Legacy free text. Display fallback only — write `category_id`. */
-          category: string;
-          category_id: string | null;
-          note: string | null;
-          entry_date: string;
-          /** Null = standalone entry. Set = synced to that transaction (0011). */
-          linked_transaction_id: string | null;
-          created_at: string;
-        };
-        Insert: {
-          id?: string;
-          user_id: string;
-          household_id: string;
-          type: "income" | "expense";
-          amount_paisa: number;
-          category: string;
-          category_id?: string | null;
-          note?: string | null;
-          entry_date?: string;
-          linked_transaction_id?: string | null;
-          created_at?: string;
-        };
-        Update: Partial<Database["public"]["Tables"]["quick_entries"]["Insert"]>;
-        Relationships: [];
-      };
       budgets: {
         Row: {
           id: string;
@@ -697,13 +664,16 @@ export type Database = {
           account_number_last4: string | null;
           currency: string;
           balance_paisa: number;
+          /** Deactivated: reversible. Hidden everywhere, history intact. */
           is_archived: boolean;
           /**
-           * False = quick entries may never link to this account; it operates as
-           * a pure bank ledger. Blocks linking only — the balance still counts
-           * toward net worth. Enforced in the DB by assert_entry_link_valid().
+           * Savings you may pay INTO but never spend FROM. Enforced by
+           * assert_account_accepts_movement — a disabled dropdown option stops a
+           * click, not an import or a REST call. Never true for `cash`.
            */
-          allow_entry_link: boolean;
+          is_locked: boolean;
+          /** Soft-deleted. Rows referencing it render a "Deleted account" tag. */
+          deleted_at: string | null;
           created_at: string;
           updated_at: string;
         };
@@ -717,7 +687,8 @@ export type Database = {
           currency?: string;
           balance_paisa?: number;
           is_archived?: boolean;
-          allow_entry_link?: boolean;
+          is_locked?: boolean;
+          deleted_at?: string | null;
           created_at?: string;
           updated_at?: string;
         };
@@ -734,11 +705,23 @@ export type Database = {
           transfer_account_id: string | null;
           /** Self-reference pairing the two halves of a transfer. NOT the entry link. */
           linked_transaction_id: string | null;
-          /** SIGNED. Income > 0, expense < 0. The balance trigger adds it directly. */
+          /**
+           * SIGNED. Income > 0, expense < 0. The balance trigger adds it directly.
+           * transactions_amount_sign_check enforces the agreement with `type`;
+           * transfers are exempt because their two legs carry opposite signs.
+           */
           amount_paisa: number;
           type: TransactionType;
           date: string;
           note: string | null;
+          /**
+           * True = the balance this account STARTED with, not money earned.
+           * Every "money in" figure must exclude these or the opening position is
+           * counted as income for the month the account was created.
+           */
+          is_opening: boolean;
+          /** Who logged it. Carried over from quick_entries.user_id. */
+          created_by: string | null;
           is_cleared: boolean;
           reference_no: string | null;
           payment_method: PaymentMethod | null;
@@ -761,6 +744,8 @@ export type Database = {
           type: TransactionType;
           date?: string;
           note?: string | null;
+          is_opening?: boolean;
+          created_by?: string | null;
           is_cleared?: boolean;
           reference_no?: string | null;
           payment_method?: PaymentMethod | null;

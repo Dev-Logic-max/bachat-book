@@ -184,8 +184,23 @@ export default function RulesSettingsPage() {
       )}
 
       {/* Add Rule Modal */}
-      <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Create Automation Rule">
-        <form onSubmit={handleAddRule} className="space-y-4">
+      <Modal
+        isOpen={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        title="Create Automation Rule"
+        onSubmit={handleAddRule}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Save Rule
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
           <Input
             label="If Text Pattern Contains..."
             placeholder="e.g. K-Electric, Foodpanda, Imtiaz"
@@ -208,15 +223,7 @@ export default function RulesSettingsPage() {
             options={merchantOptions}
           />
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Rule
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

@@ -7,29 +7,32 @@ import { RichSelect } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { CategoryIcon } from "@/components/category-icon";
+import { DatePicker } from "@/components/ui/date-picker";
+import { accountSelectOptions } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
-import {
-  ACCOUNT_TYPE_LABEL,
-  entryToSignedPaisa,
-  groupCategories,
-  todayISO,
-} from "@/lib/ledger";
+import { ensureCashAccount } from "@/lib/ledger-actions";
+import { groupCategories, toSignedPaisa, todayISO } from "@/lib/ledger";
+import { formatPKR } from "@/lib/format";
 
 import type { SelectOption } from "@/components/ui/select";
 import type { Tables } from "@/lib/supabase/types";
 
-/** Sentinel for "not linked". A RichSelect value must be a string. */
-const NO_LINK = "__none__";
+type AccountWithInstitution = Tables<"accounts"> & {
+  institutions: Tables<"institutions"> | null;
+};
 
+/**
+ * The draft an edit passes back in. `account_id` is not optional — under the
+ * single-ledger model every movement names an account.
+ */
 export interface QuickEntryDraft {
   id: string;
   type: "income" | "expense";
   amount_paisa: number;
-  category: string;
   category_id: string | null;
   note: string | null;
   entry_date: string;
-  linked_transaction_id: string | null;
+  account_id: string;
 }
 
 interface QuickAddModalProps {
@@ -41,6 +44,11 @@ interface QuickAddModalProps {
   onSuccess?: () => void;
   /** Present = edit mode. */
   entry?: QuickEntryDraft | null;
+  /**
+   * Pre-selects an account, for the "Log Transaction" door into this same form.
+   * Without it the form opens on cash.
+   */
+  defaultAccountId?: string | null;
 }
 
 export function QuickAddModal({
@@ -51,6 +59,7 @@ export function QuickAddModal({
   userId,
   onSuccess,
   entry = null,
+  defaultAccountId = null,
 }: QuickAddModalProps) {
   const isEdit = Boolean(entry);
 
@@ -59,21 +68,19 @@ export function QuickAddModal({
   const [categoryId, setCategoryId] = React.useState("");
   const [note, setNote] = React.useState("");
   const [entryDate, setEntryDate] = React.useState(todayISO());
-  const [accountId, setAccountId] = React.useState(NO_LINK);
+  const [accountId, setAccountId] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
-  const [accounts, setAccounts] = React.useState<
-    Array<Tables<"accounts"> & { institutions: Tables<"institutions"> | null }>
-  >([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
 
   const { showToast } = useToast();
   const supabase = createClient();
 
-  // Re-seed the form whenever the modal opens, or the caller switches which entry
-  // is being edited. A state initialiser cannot do this — the component stays
-  // mounted between openings — and React Compiler bans setState in an effect.
-  const formKey = `${isOpen}:${entry?.id ?? "new"}:${defaultType}`;
+  // Re-seed whenever the modal opens or the caller switches which entry is being
+  // edited. A state initialiser cannot do this — the component stays mounted
+  // between openings — and React Compiler bans setState in an effect.
+  const formKey = `${isOpen}:${entry?.id ?? "new"}:${defaultType}:${defaultAccountId ?? ""}`;
   const [seededKey, setSeededKey] = React.useState(formKey);
   if (seededKey !== formKey) {
     setSeededKey(formKey);
@@ -84,14 +91,16 @@ export function QuickAddModal({
         setCategoryId(entry.category_id ?? "");
         setNote(entry.note ?? "");
         setEntryDate(entry.entry_date);
-        setAccountId(NO_LINK); // resolved below once accounts load
+        setAccountId(entry.account_id);
       } else {
         setType(defaultType);
         setAmount("");
         setCategoryId("");
         setNote("");
         setEntryDate(todayISO());
-        setAccountId(NO_LINK);
+        // Resolved to the cash account once accounts load, unless the caller
+        // named one.
+        setAccountId(defaultAccountId ?? "");
       }
     }
   }
@@ -107,22 +116,13 @@ export function QuickAddModal({
           .from("accounts")
           .select("*, institutions(*)")
           .eq("household_id", householdId)
-          .eq("is_archived", false)
-          // Accounts opted out of linking must not even appear as a choice.
-          // The database rejects them too (assert_entry_link_valid).
-          .eq("allow_entry_link", true)
-          .order("name"),
+          .is("deleted_at", null)
+          .order("created_at"),
       ]);
 
       if (!active) return;
       if (catRes.data) setCategories(catRes.data);
-      if (accRes.data) {
-        setAccounts(
-          accRes.data as unknown as Array<
-            Tables<"accounts"> & { institutions: Tables<"institutions"> | null }
-          >,
-        );
-      }
+      if (accRes.data) setAccounts(accRes.data as unknown as AccountWithInstitution[]);
     }
 
     load();
@@ -131,26 +131,22 @@ export function QuickAddModal({
     };
   }, [isOpen, householdId, supabase]);
 
-  // In edit mode, resolve which account the linked transaction belongs to so the
-  // picker shows the existing link rather than "Not linked".
-  const linkedTxId = entry?.linked_transaction_id ?? null;
-  React.useEffect(() => {
-    if (!isOpen || !linkedTxId) return;
-    let active = true;
-
-    supabase
-      .from("transactions")
-      .select("account_id")
-      .eq("id", linkedTxId)
-      .single()
-      .then(({ data }) => {
-        if (active && data?.account_id) setAccountId(data.account_id);
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [isOpen, linkedTxId, supabase]);
+  /*
+   * Default to cash — DERIVED, not stored.
+   *
+   * Every movement must name an account, so the form can never sit on "nothing
+   * selected". Cash is the honest default: money you spent without saying where
+   * from is money out of your pocket. Resolving it here rather than at submit
+   * time means you SEE which balance you are about to move before you save.
+   *
+   * Accounts arrive asynchronously, so the obvious version of this is an effect
+   * that calls setAccountId once they land — but that is a synchronous setState
+   * in useEffect, which React Compiler rejects. Falling back at read time needs
+   * no effect and cannot fight an explicit choice.
+   */
+  const cashAccountId =
+    accounts.find((a) => a.type === "cash" && !a.is_archived && !a.deleted_at)?.id ?? "";
+  const effectiveAccountId = accountId || cashAccountId;
 
   const categoryOptions: SelectOption[] = React.useMemo(
     () =>
@@ -168,26 +164,14 @@ export function QuickAddModal({
   const categoryStillValid = categoryOptions.some((o) => o.value === categoryId);
   const effectiveCategoryId = categoryStillValid ? categoryId : "";
 
+  /*
+   * Unavailable accounts are SHOWN, not hidden — greyed with the reason on the
+   * right. One shared builder so every account picker in the app renders the
+   * same mark, balance and chip.
+   */
   const accountOptions: SelectOption[] = React.useMemo(
-    () => [
-      {
-        value: NO_LINK,
-        label: "Not linked — standalone entry",
-        description: "Stays in Entries only. No account balance changes.",
-      },
-      ...accounts.map((a) => ({
-        value: a.id,
-        label: a.name,
-        description: [
-          a.institutions?.short_name ?? a.institutions?.name,
-          ACCOUNT_TYPE_LABEL[a.type] ?? a.type,
-        ]
-          .filter(Boolean)
-          .join(" · "),
-        avatarUrl: a.institutions?.logo_path ?? null,
-      })),
-    ],
-    [accounts],
+    () => accountSelectOptions(accounts, { direction: type }),
+    [accounts, type],
   );
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -220,66 +204,60 @@ export function QuickAddModal({
     }
 
     setLoading(true);
-    const unsignedPaisa = Math.round(numAmount * 100);
-    const wantsLink = accountId !== NO_LINK;
-
     try {
+      /*
+       * Never save without an account. If the accounts query has not landed yet,
+       * or the household genuinely has no cash account, create one rather than
+       * writing a movement that belongs nowhere — that is exactly the standalone
+       * entry this model exists to eliminate.
+       */
+      const targetAccountId =
+        effectiveAccountId || (await ensureCashAccount(supabase, householdId));
+      const signedPaisa = toSignedPaisa(type, Math.round(numAmount * 100));
+
       if (isEdit && entry) {
-        // The 0011 trigger propagates these fields to a linked transaction, so
-        // the entry update is the only write needed for the shared fields.
+        /*
+         * ONE row, so one UPDATE — including `account_id`. Changing the account
+         * used to be a silent no-op: the old code had branches for adding and
+         * removing a link but none for moving one, so the money never followed.
+         * sync_account_balance_trigger settles BOTH the old and new account off
+         * this single write.
+         */
         const { error } = await supabase
-          .from("quick_entries")
+          .from("transactions")
           .update({
-            type,
-            amount_paisa: unsignedPaisa,
-            category: effectiveCategoryId,
+            account_id: targetAccountId,
             category_id: effectiveCategoryId,
+            amount_paisa: signedPaisa,
+            type,
+            date: entryDate,
             note: note.trim() || null,
-            entry_date: entryDate,
           })
           .eq("id", entry.id);
         if (error) throw error;
 
-        // Link changes are a separate concern from field edits.
-        const hadLink = Boolean(entry.linked_transaction_id);
-        if (!wantsLink && hadLink) {
-          const { error: unlinkErr } = await supabase
-            .from("quick_entries")
-            .update({ linked_transaction_id: null })
-            .eq("id", entry.id);
-          if (unlinkErr) throw unlinkErr;
-        } else if (wantsLink && !hadLink) {
-          const txId = await createLinkedTransaction(unsignedPaisa);
-          const { error: linkErr } = await supabase
-            .from("quick_entries")
-            .update({ linked_transaction_id: txId })
-            .eq("id", entry.id);
-          if (linkErr) throw linkErr;
-        }
-
         showToast({ type: "success", title: "Entry updated" });
       } else {
-        const txId = wantsLink ? await createLinkedTransaction(unsignedPaisa) : null;
-
-        const { error } = await supabase.from("quick_entries").insert({
-          user_id: userId,
+        const { error } = await supabase.from("transactions").insert({
           household_id: householdId,
-          type,
-          amount_paisa: unsignedPaisa,
-          category: effectiveCategoryId,
+          account_id: targetAccountId,
           category_id: effectiveCategoryId,
+          amount_paisa: signedPaisa,
+          type,
+          date: entryDate,
           note: note.trim() || null,
-          entry_date: entryDate,
-          linked_transaction_id: txId,
+          created_by: userId,
         });
         if (error) throw error;
 
+        const accountName =
+          accounts.find((a) => a.id === targetAccountId)?.name ?? "your cash";
         showToast({
           type: "success",
           title: type === "expense" ? "Expense added" : "Income added",
-          description: wantsLink
-            ? `Rs ${numAmount.toLocaleString()} logged and synced to the account.`
-            : `Rs ${numAmount.toLocaleString()} logged.`,
+          description: `Rs ${numAmount.toLocaleString()} ${
+            type === "expense" ? "out of" : "into"
+          } ${accountName}.`,
         });
       }
 
@@ -296,50 +274,38 @@ export function QuickAddModal({
     }
   };
 
-  async function createLinkedTransaction(unsignedPaisa: number): Promise<string> {
-    const { data, error } = await supabase
-      .from("transactions")
-      .insert({
-        household_id: householdId,
-        account_id: accountId,
-        category_id: effectiveCategoryId,
-        amount_paisa: entryToSignedPaisa(type, unsignedPaisa),
-        type,
-        date: entryDate,
-        note: note.trim() || null,
-      })
-      .select("id")
-      .single();
-
-    if (error || !data) {
-      throw error ?? new Error("Could not create the linked transaction.");
-    }
-    return data.id;
-  }
-
-  const linkedAccountName =
-    accountId !== NO_LINK
-      ? accounts.find((a) => a.id === accountId)?.name
-      : undefined;
+  const selectedAccount = accounts.find((a) => a.id === effectiveAccountId);
+  const previewPaisa = Math.round((parseFloat(amount) || 0) * 100);
+  const projectedPaisa = selectedAccount
+    ? Number(selectedAccount.balance_paisa) +
+      (type === "income" ? previewPaisa : -previewPaisa)
+    : 0;
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onClose}
       title={
-        isEdit
-          ? "Edit entry"
-          : type === "expense"
-            ? "Add Expense"
-            : "Add Income"
+        isEdit ? "Edit entry" : type === "expense" ? "Add Expense" : "Add Income"
       }
       subtitle={
         isEdit
-          ? "Changes apply to the linked transaction too"
-          : "Log a quick entry to your active workspace"
+          ? "The account balance follows this entry"
+          : "Every entry moves one of your accounts"
+      }
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={loading}>
+            {isEdit ? "Save changes" : "Save entry"}
+          </Button>
+        </>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-4 pt-1">
+      <div className="space-y-4">
         <div className="bg-surface-subtle grid grid-cols-2 gap-1 rounded-control p-1">
           {(["expense", "income"] as const).map((t) => (
             <button
@@ -369,20 +335,19 @@ export function QuickAddModal({
             onChange={(e) => setAmount(e.target.value)}
             required
             autoFocus
+            className="tnum"
           />
 
           {/*
            * Date used to be hardcoded to today with no field at all. Backdating is
            * the most common correction in a finance app.
            */}
-          <Input
+          <DatePicker
             label="Date"
-            type="date"
             value={entryDate}
+            onChange={setEntryDate}
             max={todayISO()}
-            onChange={(e) => setEntryDate(e.target.value)}
             required
-            className="ltr"
           />
         </div>
 
@@ -397,15 +362,24 @@ export function QuickAddModal({
           emptyMessage="No categories for this type"
         />
 
+        {/*
+         * Required, not optional. There is no "standalone entry" any more — an
+         * entry that belonged to no account was money the app claimed you earned
+         * or spent while no balance anywhere reflected it.
+         */}
         <RichSelect
-          label="Link to account (optional)"
-          value={accountId}
+          label="Account"
+          value={effectiveAccountId}
           onChange={setAccountId}
           options={accountOptions}
+          placeholder={accounts.length === 0 ? "Loading accounts…" : "Choose an account"}
+          emptyMessage="Add an account first"
           hint={
-            linkedAccountName
-              ? `Creates a matching transaction in ${linkedAccountName}. Editing either side updates both.`
-              : "Leave unlinked to keep this entry independent of your accounts."
+            selectedAccount && previewPaisa > 0
+              ? `${formatPKR(Number(selectedAccount.balance_paisa))} → ${formatPKR(projectedPaisa)} after this`
+              : selectedAccount
+                ? `Holds ${formatPKR(Number(selectedAccount.balance_paisa))}`
+                : "Defaults to cash — every entry moves an account."
           }
         />
 
@@ -415,16 +389,7 @@ export function QuickAddModal({
           value={note}
           onChange={(e) => setNote(e.target.value)}
         />
-
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={loading}>
-            {isEdit ? "Save changes" : "Save entry"}
-          </Button>
-        </div>
-      </form>
+      </div>
     </Modal>
   );
 }

@@ -8,32 +8,36 @@ import { cn } from "@/lib/utils";
 
 import type { Tables } from "@/lib/supabase/types";
 
-export type EntryWithCategory = Tables<"quick_entries"> & {
+export type EntryWithCategory = Tables<"transactions"> & {
   categories: Tables<"categories"> | null;
 };
 
 /**
- * One quick-entry row. Shared by /entries and the dashboard's Recent Activity so
- * the same record never renders two different ways.
+ * One movement, rendered as an entry. Shared by /entries and the dashboard's
+ * Recent Activity so the same record never renders two different ways.
  *
- * `group` on the <li> is what drives the hover reveal in RowActions — remove it and
- * the actions never appear.
+ * `group` on the <li> is what drives the hover reveal in RowActions — remove it
+ * and the actions never appear.
  */
 export function EntryRow({
   entry,
-  linkedAccountName,
+  accountName,
   onEdit,
   onDelete,
   className,
 }: {
   entry: EntryWithCategory;
-  linkedAccountName?: string | null;
+  /** Which balance this moved. Always present now — every entry names an account. */
+  accountName?: string | null;
   onEdit?: () => void;
   onDelete?: () => void;
   className?: string;
 }) {
-  const isIncome = entry.type === "income";
-  const categoryName = entry.categories?.name ?? entry.category;
+  // The column is SIGNED; `type` agrees with it by constraint. Read the sign so
+  // the row cannot disagree with the balance it moved.
+  const amount = Number(entry.amount_paisa);
+  const isIncome = amount >= 0;
+  const categoryName = entry.categories?.name ?? "Uncategorised";
   const title = entry.note?.trim() || categoryName;
 
   return (
@@ -64,12 +68,10 @@ export function EntryRow({
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <p className="truncate text-xs font-medium">{title}</p>
-          {entry.linked_transaction_id && (
-            <LinkBadge label={linkedAccountName || "Linked"} />
-          )}
+          {accountName && <LinkBadge label={accountName} />}
         </div>
         <p className="text-faint mt-0.5 text-[11px]">
-          <span className="ltr">{entry.entry_date}</span>
+          <span className="ltr">{entry.date}</span>
           {" · "}
           <span>{categoryName}</span>
         </p>
@@ -83,7 +85,7 @@ export function EntryRow({
           )}
         >
           {isIncome ? "+" : "−"}
-          {formatPKR(entry.amount_paisa)}
+          {formatPKR(Math.abs(amount))}
         </span>
         {(onEdit || onDelete) && (
           <RowActions onEdit={onEdit} onDelete={onDelete} reveal="hover" />

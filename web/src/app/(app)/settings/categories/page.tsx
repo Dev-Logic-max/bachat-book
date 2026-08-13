@@ -158,8 +158,23 @@ export default function CategorySettingsPage() {
       )}
 
       {/* Add Category Modal */}
-      <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Add Category">
-        <form onSubmit={handleAddCategory} className="space-y-4">
+      <Modal
+        isOpen={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        title="Add Category"
+        onSubmit={handleAddCategory}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Create Category
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
           <Input
             label="Category Name"
             placeholder="e.g. Solar Panel Maintenance"
@@ -197,15 +212,7 @@ export default function CategorySettingsPage() {
             ]}
           />
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Create Category
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

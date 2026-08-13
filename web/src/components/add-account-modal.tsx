@@ -1,14 +1,21 @@
 "use client";
 
 import * as React from "react";
+import { Lock } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { RichSelect } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import {
+  DEFAULT_ACCOUNT_TYPE,
+  DEFAULT_INSTITUTION_ID,
+  accountTypeOptions,
+  defaultTypeForInstitution,
+  institutionOptions,
+} from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables, AccountType } from "@/lib/supabase/types";
-import { todayISO } from "@/lib/ledger";
 
 interface AddAccountModalProps {
   isOpen: boolean;
@@ -17,15 +24,6 @@ interface AddAccountModalProps {
   onSuccess?: () => void;
 }
 
-const ACCOUNT_TYPES: { value: AccountType; label: string }[] = [
-  { value: "checking", label: "Current / Checking Account" },
-  { value: "savings", label: "Savings / Asaan Account" },
-  { value: "wallet", label: "Mobile Wallet (Easypaisa / JazzCash / SadaPay / NayaPay)" },
-  { value: "cash", label: "Cash Wallet / Physical Cash" },
-  { value: "credit", label: "Credit Card" },
-  { value: "investment", label: "Investment / Mutual Fund / NSS" },
-];
-
 export function AddAccountModal({
   isOpen,
   onClose,
@@ -33,35 +31,69 @@ export function AddAccountModal({
   onSuccess,
 }: AddAccountModalProps) {
   const [institutions, setInstitutions] = React.useState<Tables<"institutions">[]>([]);
-  const [institutionId, setInstitutionId] = React.useState<string>("meezan");
+  const [heldCounts, setHeldCounts] = React.useState<Map<string | null, number>>(
+    () => new Map(),
+  );
+  // Opens on cash — the account almost everyone needs first, and the one every
+  // entry falls back to. It used to default to "meezan", so a cash-only user had
+  // to notice and undo a bank they never picked.
+  const [institutionId, setInstitutionId] =
+    React.useState<string>(DEFAULT_INSTITUTION_ID);
   const [name, setName] = React.useState("");
-  const [type, setType] = React.useState<AccountType>("checking");
+  const [type, setType] = React.useState<AccountType>(DEFAULT_ACCOUNT_TYPE);
   const [last4, setLast4] = React.useState("");
-  const [initialBalance, setInitialBalance] = React.useState("");
+  const [isLocked, setIsLocked] = React.useState(false);
   const [loading, setLoading] = React.useState(false);
 
   const { showToast } = useToast();
   const supabase = createClient();
 
   React.useEffect(() => {
+    if (!isOpen) return;
     let active = true;
-    async function loadInstitutions() {
-      const { data } = await supabase
-        .from("institutions")
-        .select("*")
-        .order("name", { ascending: true });
 
-      if (active && data) {
-        setInstitutions(data);
+    async function load() {
+      const [{ data: insts }, { data: existing }] = await Promise.all([
+        supabase.from("institutions").select("*").order("name"),
+        // Drives the "2 held" badge only. It is a COUNT for display — creating a
+        // second account at the same institution stays perfectly legal.
+        supabase
+          .from("accounts")
+          .select("institution_id")
+          .eq("household_id", householdId),
+      ]);
+
+      if (!active) return;
+      if (insts) setInstitutions(insts);
+      if (existing) {
+        const counts = new Map<string | null, number>();
+        for (const row of existing) {
+          counts.set(row.institution_id, (counts.get(row.institution_id) ?? 0) + 1);
+        }
+        setHeldCounts(counts);
       }
     }
-    if (isOpen) {
-      loadInstitutions();
-    }
+
+    load();
     return () => {
       active = false;
     };
-  }, [isOpen, supabase]);
+  }, [isOpen, householdId, supabase]);
+
+  const selectedInstitution = institutions.find((i) => i.id === institutionId);
+  const typeOptions = accountTypeOptions(selectedInstitution);
+
+  const handleInstitutionChange = (value: string) => {
+    setInstitutionId(value);
+    /*
+     * The type must follow the institution, not merely be validated against it.
+     * Cash has no institution, a wallet is only ever a wallet, and a bank offers
+     * current-or-savings — so every switch lands on a type that is legal for the
+     * new choice. Leaving the old value would strand "Current account" under
+     * JazzCash, which is what the constrained list exists to prevent.
+     */
+    setType(defaultTypeForInstitution(institutions.find((i) => i.id === value)));
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,85 +104,73 @@ export function AddAccountModal({
 
     setLoading(true);
 
-    const initialBalancePaisa = Math.round(parseFloat(initialBalance || "0") * 100);
+    /*
+     * Every account starts at ZERO. There is no opening-balance field.
+     *
+     * An opening balance was written as a hidden transaction, so the account held
+     * money that no entry accounted for — the exact gap that made Entries and
+     * Accounts disagree. Money now arrives the same way it always does: you log an
+     * income entry against the account, and it is visible in the log like every
+     * other rupee.
+     */
+    const { error: accErr } = await supabase.from("accounts").insert({
+      household_id: householdId,
+      institution_id: institutionId === "none" ? null : institutionId,
+      name: name.trim(),
+      type,
+      account_number_last4: last4.trim() || null,
+      currency: "PKR",
+      balance_paisa: 0,
+      is_locked: isLocked,
+    });
 
-    // Insert Account
-    const { data: newAcc, error: accErr } = await supabase
-      .from("accounts")
-      .insert({
-        household_id: householdId,
-        institution_id: institutionId === "none" ? null : institutionId,
-        name: name.trim(),
-        type,
-        account_number_last4: last4.trim() || null,
-        currency: "PKR",
-        balance_paisa: 0,
-      })
-      .select()
-      .single();
-
-    if (accErr || !newAcc) {
+    if (accErr) {
       setLoading(false);
-      showToast({ type: "error", title: "Failed to create account", description: accErr?.message });
+      showToast({ type: "error", title: "Failed to create account", description: accErr.message });
       return;
     }
 
-    // Insert opening balance transaction if non-zero. Deliberately uncategorised:
-    // an opening balance is not salary and not a purchase, and forcing a
-    // category id here is what tagged every new account "Monthly Salary".
-    if (initialBalancePaisa !== 0) {
-      const { error: openingErr } = await supabase.from("transactions").insert({
-        household_id: householdId,
-        account_id: newAcc.id,
-        category_id: null,
-        amount_paisa: initialBalancePaisa,
-        type: initialBalancePaisa > 0 ? "income" : "expense",
-        date: todayISO(),
-        note: "Opening balance",
-      });
-
-      // This result used to be discarded. A negative opening balance was written
-      // with category_id 'general', which is not a real category id, so the FK
-      // rejected it and the row silently never existed — the account appeared with
-      // a zero balance and no explanation.
-      if (openingErr) {
-        setLoading(false);
-        showToast({
-          type: "error",
-          title: "Account created, opening balance failed",
-          description: `${openingErr.message} — add it from the account's ledger.`,
-        });
-        onClose();
-        if (onSuccess) onSuccess();
-        return;
-      }
-    }
-
     setLoading(false);
-    showToast({ type: "success", title: "Account Created", description: `"${name}" added successfully.` });
+    showToast({
+      type: "success",
+      title: "Account Created",
+      description: `"${name}" starts at Rs 0 — log an income entry to fund it.`,
+    });
     setName("");
     setLast4("");
-    setInitialBalance("");
+    setIsLocked(false);
+    // Institution and type were left behind on the last account, so adding a
+    // wallet then reopening the form offered to add a second wallet.
+    setInstitutionId(DEFAULT_INSTITUTION_ID);
+    setType(DEFAULT_ACCOUNT_TYPE);
     onClose();
     if (onSuccess) onSuccess();
   };
 
-  const institutionOptions = [
-    { value: "none", label: "Other / Physical Cash" },
-    ...institutions.map((inst) => ({
-      value: inst.id,
-      label: `${inst.name} (${inst.short_name})`,
-    })),
-  ];
-
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Add Financial Account">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <Select
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Add Financial Account"
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={loading}>
+            Add Account
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <RichSelect
           label="Financial Institution"
           value={institutionId}
-          onChange={(e) => setInstitutionId(e.target.value)}
-          options={institutionOptions}
+          onChange={handleInstitutionChange}
+          options={institutionOptions(institutions, heldCounts)}
+          hint="“held” marks where you already have an account — you can add another."
         />
 
         {/*
@@ -168,11 +188,12 @@ export function AddAccountModal({
         />
 
         <div className="grid grid-cols-2 gap-3">
-          <Select
+          <RichSelect
             label="Account Type"
             value={type}
-            onChange={(e) => setType(e.target.value as AccountType)}
-            options={ACCOUNT_TYPES}
+            onChange={(v) => setType(v as AccountType)}
+            options={typeOptions}
+            disabled={typeOptions.length < 2}
           />
 
           <Input
@@ -181,28 +202,43 @@ export function AddAccountModal({
             maxLength={4}
             value={last4}
             onChange={(e) => setLast4(e.target.value)}
+            className="ltr"
           />
         </div>
 
-        <Input
-          label="Opening balance (PKR)"
-          type="number"
-          step="any"
-          placeholder="e.g. 50000"
-          hint="Recorded as an uncategorised opening entry at the top of the ledger."
-          value={initialBalance}
-          onChange={(e) => setInitialBalance(e.target.value)}
-        />
+        {/*
+          Locking is meaningless for cash — it is the account every entry falls
+          back to, so a locked cash account would leave an expense nowhere legal
+          to go. The database refuses it too (accounts_cash_never_locked).
+        */}
+        {type !== "cash" && (
+          <label className="border-border hover:bg-surface-subtle flex cursor-pointer items-start gap-2.5 rounded-control border p-3 transition-colors">
+            <input
+              type="checkbox"
+              checked={isLocked}
+              onChange={(e) => setIsLocked(e.target.checked)}
+              className="accent-navy-900 dark:accent-brass mt-0.5 size-4 shrink-0 rounded"
+            />
+            <span className="min-w-0">
+              <span className="text-foreground flex items-center gap-1.5 text-[12.5px] font-medium">
+                <Lock size={13} />
+                Savings only — never spend from this
+              </span>
+              <span className="text-muted mt-0.5 block text-[11.5px] leading-snug">
+                Money can be paid in but never taken out. It still counts toward
+                what you hold, and it stays visible when logging an expense —
+                greyed out, marked “Locked”, so you can see why it is unavailable.
+              </span>
+            </span>
+          </label>
+        )}
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-border">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={loading}>
-            Add Account
-          </Button>
-        </div>
-      </form>
+        <p className="text-faint text-[11px] leading-snug">
+          The account starts at <span className="tnum">Rs 0</span>. Add money by
+          logging an income entry against it, so every rupee in the balance is
+          explained by something you can see in Entries.
+        </p>
+      </div>
     </Modal>
   );
 }

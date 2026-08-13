@@ -4,16 +4,17 @@ import * as React from "react";
 import { X, Trash2, Split, ArrowUpRight, ArrowDownRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Select, RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { CategoryIcon } from "@/components/category-icon";
 import { LinkBadge } from "@/components/ui/row-actions";
 import { createClient } from "@/lib/supabase/client";
-import { deleteTransaction, findLinkedEntry } from "@/lib/ledger-actions";
+import { deleteMovement, deleteTransfer } from "@/lib/ledger-actions";
 import {
   PAYMENT_METHOD_LABEL,
-  entryToSignedPaisa,
+  toSignedPaisa,
   groupCategories,
   todayISO,
 } from "@/lib/ledger";
@@ -59,13 +60,17 @@ export function TransactionDrawer({
   const [splitLines, setSplitLines] = React.useState<{ category_id: string; amount: string; note: string }[]>([]);
   const [loading, setLoading] = React.useState(false);
 
-  // The quick entry synced to this transaction, if any. The FK lives on
-  // quick_entries, so a transaction cannot name its partner without a lookup.
-  const [linkedEntry, setLinkedEntry] = React.useState<{
-    id: string;
-    amount_paisa: number;
-    note: string | null;
-  } | null>(null);
+  /*
+   * The OTHER LEG of a transfer, if this row is one.
+   *
+   * `linked_transaction_id` used to mean two different things depending on which
+   * table you read it from. Now there is one table and it means one thing: the
+   * counterpart leg of a transfer. Nothing points at a "quick entry" any more —
+   * this row IS the entry.
+   */
+  const [linkedLeg, setLinkedLeg] = React.useState<Tables<"transactions"> | null>(
+    null,
+  );
   const [confirmOpen, setConfirmOpen] = React.useState(false);
 
   // Sync state when transaction prop changes
@@ -78,27 +83,29 @@ export function TransactionDrawer({
     setDate(transaction.date);
     setReferenceNo(transaction.reference_no || "");
     setPaymentMethod(transaction.payment_method || "none");
-    setLinkedEntry(null);
+    setLinkedLeg(null);
   }
 
   React.useEffect(() => {
     let active = true;
     if (!transaction) return;
     const txId = transaction.id;
+    const legId = transaction.linked_transaction_id;
 
     async function loadData() {
-      const [catRes, merRes, splitRes] = await Promise.all([
+      const [catRes, merRes, splitRes, legRes] = await Promise.all([
         supabase.from("categories").select("*").order("name", { ascending: true }),
         supabase.from("merchants").select("*").order("name", { ascending: true }),
         supabase.from("transaction_splits").select("*").eq("transaction_id", txId),
+        legId
+          ? supabase.from("transactions").select("*").eq("id", legId).maybeSingle()
+          : Promise.resolve({ data: null }),
       ]);
-
-      const linked = await findLinkedEntry(supabase, txId);
 
       if (active) {
         if (catRes.data) setCategories(catRes.data);
         if (merRes.data) setMerchants(merRes.data);
-        setLinkedEntry(linked);
+        setLinkedLeg(legRes.data as Tables<"transactions"> | null);
         if (splitRes.data && splitRes.data.length > 0) {
           setIsSplitting(true);
           setSplitLines(
@@ -173,8 +180,8 @@ export function TransactionDrawer({
      *
      * amount_paisa is SIGNED here — the balance trigger adds it directly, so the
      * original direction has to be preserved rather than the raw input written.
-     * If this row is linked to a quick entry, the 0011 trigger propagates amount,
-     * date, category and note across; no second write is needed for those.
+     * This is the only copy of the row, so one UPDATE is the whole job; the
+     * balance re-settles off the back of it.
      */
     const { error: txErr } = await supabase
       .from("transactions")
@@ -182,7 +189,7 @@ export function TransactionDrawer({
         category_id: categoryId || null,
         merchant_id: merchantId === "none" ? null : merchantId,
         note: note.trim() || null,
-        amount_paisa: entryToSignedPaisa(
+        amount_paisa: toSignedPaisa(
           isIncome ? "income" : "expense",
           Math.round(newAmount * 100),
         ),
@@ -220,25 +227,27 @@ export function TransactionDrawer({
 
   /*
    * Delete goes through the shared ConfirmDeleteModal, never window.confirm: a
-   * native dialog cannot name the linked records or state the balance change, and
-   * this row may be half of a synced pair.
+   * native dialog cannot name the records involved or state the balance change.
+   *
+   * There is no cascade choice left. A plain movement is one row. A TRANSFER is
+   * two rows that must go together — delete one leg alone and the receiving
+   * account keeps its credit while the sending account never gave it up, so
+   * money appears out of nowhere.
    */
-  const handleDelete = async (cascade: boolean) => {
+  const handleDelete = async () => {
     try {
-      await deleteTransaction(
-        supabase,
-        transaction.id,
-        linkedEntry?.id ?? null,
-        cascade,
-      );
+      if (transaction.type === "transfer") {
+        await deleteTransfer(supabase, transaction.id, linkedLeg?.id ?? null);
+      } else {
+        await deleteMovement(supabase, transaction.id);
+      }
       showToast({
         type: "success",
-        title: "Transaction deleted",
-        description: linkedEntry
-          ? cascade
-            ? "The linked entry was deleted too."
-            : "The linked entry was kept and unlinked."
-          : "Account balance recalculated.",
+        title: transaction.type === "transfer" ? "Transfer deleted" : "Transaction deleted",
+        description:
+          transaction.type === "transfer"
+            ? "Both sides were removed and the balances re-settled."
+            : "Account balance recalculated.",
       });
       setConfirmOpen(false);
       onClose();
@@ -311,12 +320,13 @@ export function TransactionDrawer({
               {formatPKR(totalAmountPaisa)}
             </div>
             <span className="text-muted text-xs block mt-1">
-              {transaction.accounts?.name || "Unassigned"} ·{" "}
+              {transaction.accounts?.name || "Unassigned"}
+              {transaction.accounts?.deleted_at && " (deleted account)"} ·{" "}
               <span className="ltr">{transaction.date}</span>
             </span>
-            {linkedEntry && (
+            {linkedLeg && (
               <div className="mt-2.5 flex justify-center">
-                <LinkBadge label="Synced with an entry" />
+                <LinkBadge label="One half of a transfer" />
               </div>
             )}
           </div>
@@ -332,13 +342,11 @@ export function TransactionDrawer({
                 value={amount}
                 onChange={(e) => setAmount(e.target.value)}
               />
-              <Input
+              <DatePicker
                 label="Date"
-                type="date"
                 value={date}
+                onChange={setDate}
                 max={todayISO()}
-                onChange={(e) => setDate(e.target.value)}
-                className="ltr"
               />
             </div>
 
@@ -380,10 +388,11 @@ export function TransactionDrawer({
               />
             </div>
 
-            {linkedEntry && (
+            {linkedLeg && (
               <p className="text-muted bg-surface-subtle rounded-control px-3 py-2 text-[11.5px] leading-snug">
-                This transaction is linked to a quick entry. Saving updates the
-                amount, date, category and note on both.
+                This is one side of a transfer. Editing the amount here does not
+                move the other side — delete the transfer and record it again if
+                the figure was wrong.
               </p>
             )}
 
@@ -487,11 +496,11 @@ export function TransactionDrawer({
         recordLabel={`${transaction.merchants?.name || note || transaction.categories?.name || "Transaction"} · ${formatPKR(totalAmountPaisa)}`}
         recordMeta={`${isIncome ? "Credited" : "Debited"} · ${transaction.accounts?.name ?? "Account"} · ${transaction.date}`}
         linkedRefs={
-          linkedEntry
+          linkedLeg
             ? [
                 {
-                  kind: "Quick entry",
-                  label: `${linkedEntry.note || "Entry"} · ${formatPKR(linkedEntry.amount_paisa)}`,
+                  kind: "Other side of the transfer",
+                  label: `${linkedLeg.note || "Transfer leg"} · ${formatPKR(Math.abs(Number(linkedLeg.amount_paisa)))}`,
                 },
               ]
             : []

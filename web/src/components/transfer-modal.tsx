@@ -1,13 +1,19 @@
 "use client";
 
 import * as React from "react";
+import { ArrowRight } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
-import { Select } from "@/components/ui/select";
+import { RichSelect } from "@/components/ui/select";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
+import { accountSelectOptions } from "@/components/account-options";
+import type { AccountWithInstitution } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
-import type { Tables } from "@/lib/supabase/types";
+import { formatPKR } from "@/lib/format";
+import { todayISO } from "@/lib/ledger";
+import { cn } from "@/lib/utils";
 
 interface TransferModalProps {
   isOpen: boolean;
@@ -22,12 +28,13 @@ export function TransferModal({
   householdId,
   onSuccess,
 }: TransferModalProps) {
-  const [accounts, setAccounts] = React.useState<Tables<"accounts">[]>([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [fromAccountId, setFromAccountId] = React.useState("");
   const [toAccountId, setToAccountId] = React.useState("");
   const [amount, setAmount] = React.useState("");
   const [note, setNote] = React.useState("");
-  const [date, setDate] = React.useState(() => new Date().toISOString().split("T")[0]);
+  // Local date. toISOString() is UTC and lands on yesterday before 05:00 PKT.
+  const [date, setDate] = React.useState(todayISO);
   const [loading, setLoading] = React.useState(false);
 
   const { showToast } = useToast();
@@ -40,18 +47,26 @@ export function TransferModal({
     async function loadAccounts() {
       const { data } = await supabase
         .from("accounts")
-        .select("*")
+        .select("*, institutions(*)")
         .eq("household_id", householdId)
-        .eq("is_archived", false);
+        .eq("is_archived", false)
+        .is("deleted_at", null);
 
       if (active && data) {
-        setAccounts(data);
-        if (data.length >= 2) {
-          setFromAccountId(data[0].id);
-          setToAccountId(data[1].id);
-        } else if (data.length === 1) {
-          setFromAccountId(data[0].id);
-        }
+        const list = data as unknown as AccountWithInstitution[];
+        setAccounts(list);
+
+        /*
+         * Seed the SOURCE from an account money can actually leave.
+         *
+         * This used to take `data[0]` and `data[1]` blindly, so a locked savings
+         * account sitting first in creation order was pre-selected as the source
+         * — greyed out in its own dropdown, with the save guaranteed to fail.
+         */
+        const source = list.find((a) => !a.is_locked);
+        const target = list.find((a) => a.id !== source?.id);
+        if (source) setFromAccountId(source.id);
+        if (target) setToAccountId(target.id);
       }
     }
 
@@ -141,29 +156,105 @@ export function TransferModal({
     if (onSuccess) onSuccess();
   };
 
-  const accountOptions = accounts.map((acc) => ({
-    value: acc.id,
-    label: `${acc.name} (${acc.type})`,
-  }));
+  /*
+   * A transfer OUT is spending by another name, so the source list is scored as
+   * an expense: a locked account is shown greyed with its reason rather than
+   * quietly missing. The destination is scored as income, where a lock is no
+   * obstacle — paying into savings is the point of it.
+   */
+  const sourceOptions = accountSelectOptions(accounts, { direction: "expense" });
+  const targetOptions = accountSelectOptions(accounts, { direction: "income" }).map(
+    (o) =>
+      // Sending to the same account you took it from is a no-op the DB would
+      // happily store as two cancelling rows.
+      o.value === fromAccountId
+        ? { ...o, disabled: true, meta: sameAccountChip }
+        : o,
+  );
+
+  const fromAccount = accounts.find((a) => a.id === fromAccountId);
+  const toAccount = accounts.find((a) => a.id === toAccountId);
+  const amountPaisaPreview = Math.round((parseFloat(amount) || 0) * 100);
+  const overdrawn =
+    fromAccount !== undefined &&
+    amountPaisaPreview > Number(fromAccount.balance_paisa);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Account Transfer (Net-Zero)">
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <Select
-            label="From Account (Source)"
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Account Transfer (Net-Zero)"
+      onSubmit={handleSubmit}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" variant="primary" isLoading={loading}>
+            Confirm Transfer
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <RichSelect
+            label="From — money leaves here"
             value={fromAccountId}
-            onChange={(e) => setFromAccountId(e.target.value)}
-            options={accountOptions}
+            onChange={setFromAccountId}
+            options={sourceOptions}
+            placeholder={accounts.length === 0 ? "Loading accounts…" : "Choose an account"}
+            emptyMessage="Add an account first"
+            hint={
+              fromAccount
+                ? `Holds ${formatPKR(Number(fromAccount.balance_paisa))}`
+                : undefined
+            }
           />
 
-          <Select
-            label="To Account (Destination)"
+          <RichSelect
+            label="To — money arrives here"
             value={toAccountId}
-            onChange={(e) => setToAccountId(e.target.value)}
-            options={accountOptions}
+            onChange={setToAccountId}
+            options={targetOptions}
+            placeholder={accounts.length === 0 ? "Loading accounts…" : "Choose an account"}
+            emptyMessage="Add an account first"
+            hint={
+              toAccount ? `Holds ${formatPKR(Number(toAccount.balance_paisa))}` : undefined
+            }
           />
         </div>
+
+        {/*
+          The whole point of a transfer screen: what each side looks like AFTER.
+          Two dropdowns and an amount box asked the user to do this arithmetic in
+          their head, which is where an accidental overdraft comes from.
+        */}
+        {fromAccount && toAccount && amountPaisaPreview > 0 && (
+          <div className="bg-surface-subtle border-border rounded-card border p-3.5">
+            <div className="flex items-center gap-3">
+              <BalanceSide
+                name={fromAccount.name}
+                before={Number(fromAccount.balance_paisa)}
+                after={Number(fromAccount.balance_paisa) - amountPaisaPreview}
+                negative={overdrawn}
+              />
+              <ArrowRight size={16} className="text-muted shrink-0" />
+              <BalanceSide
+                name={toAccount.name}
+                before={Number(toAccount.balance_paisa)}
+                after={Number(toAccount.balance_paisa) + amountPaisaPreview}
+              />
+            </div>
+            {overdrawn && (
+              <p className="text-loss mt-2.5 text-[11.5px] font-medium">
+                {fromAccount.name} only holds{" "}
+                {formatPKR(Number(fromAccount.balance_paisa))}. This transfer would
+                take it below zero.
+              </p>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <Input
@@ -176,11 +267,11 @@ export function TransferModal({
             required
           />
 
-          <Input
+          <DatePicker
             label="Date"
-            type="date"
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={setDate}
+            max={todayISO()}
             required
           />
         </div>
@@ -192,15 +283,45 @@ export function TransferModal({
           onChange={(e) => setNote(e.target.value)}
         />
 
-        <div className="flex justify-end gap-3 pt-3 border-t border-border">
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={loading}>
-            Confirm Transfer
-          </Button>
-        </div>
-      </form>
+      </div>
     </Modal>
+  );
+}
+
+const sameAccountChip = (
+  <span className="border-border bg-surface-subtle text-muted rounded-full border px-1.5 py-0.5 text-[10px] leading-none font-medium">
+    Same account
+  </span>
+);
+
+/** One side of the before/after preview. */
+function BalanceSide({
+  name,
+  before,
+  after,
+  negative = false,
+}: {
+  name: string;
+  before: number;
+  after: number;
+  negative?: boolean;
+}) {
+  return (
+    <div className="min-w-0 flex-1">
+      <p className="text-muted truncate text-[11px]">{name}</p>
+      <p className="mt-0.5 flex items-baseline gap-1.5">
+        <span className="tnum text-faint text-[11px] line-through">
+          {formatPKR(before)}
+        </span>
+        <span
+          className={cn(
+            "tnum text-[13px] font-semibold",
+            negative ? "text-loss" : "text-foreground",
+          )}
+        >
+          {formatPKR(after)}
+        </span>
+      </p>
+    </div>
   );
 }

@@ -5,6 +5,7 @@ import { Users, Plus, Calendar, CheckCircle2, Circle, Trash2, ShieldCheck } from
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
@@ -175,8 +176,23 @@ export default function CommitteesPage() {
       )}
 
       {/* Add Committee Modal */}
-      <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Create Bachat Committee (BC)">
-        <form onSubmit={handleAddCommittee} className="space-y-4">
+      <Modal
+        isOpen={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        title="Create Bachat Committee (BC)"
+        onSubmit={handleAddCommittee}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Save Committee
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
           <Input
             label="Committee Name"
             placeholder="e.g. Family Bachat Committee #3"
@@ -204,11 +220,10 @@ export default function CommitteesPage() {
           </div>
 
           <div className="grid grid-cols-2 gap-3">
-            <Input
+            <DatePicker
               label="Start Date"
-              type="date"
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={setStartDate}
               required
             />
 
@@ -228,15 +243,7 @@ export default function CommitteesPage() {
             onChange={(e) => setNotes(e.target.value)}
           />
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Committee
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

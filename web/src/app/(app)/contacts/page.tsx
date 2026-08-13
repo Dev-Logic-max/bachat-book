@@ -5,10 +5,12 @@ import { Users, Plus, Cake, Phone, Mail, Trash2 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
+import { todayISO } from "@/lib/ledger";
 import type { Tables } from "@/lib/supabase/types";
 
 export default function ContactsPage() {
@@ -192,8 +194,23 @@ export default function ContactsPage() {
       )}
 
       {/* Add Contact Modal */}
-      <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Add Contact">
-        <form onSubmit={handleAddContact} className="space-y-4">
+      <Modal
+        isOpen={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        title="Add Contact"
+        onSubmit={handleAddContact}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Save Contact
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
           <Input
             label="Contact Name"
             placeholder="e.g. Tariq Mehmood"
@@ -215,11 +232,11 @@ export default function ContactsPage() {
               ]}
             />
 
-            <Input
+            <DatePicker
               label="Birthday"
-              type="date"
               value={birthday}
-              onChange={(e) => setBirthday(e.target.value)}
+              onChange={setBirthday}
+              max={todayISO()}
             />
           </div>
 
@@ -247,15 +264,7 @@ export default function ContactsPage() {
             onChange={(e) => setNotes(e.target.value)}
           />
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Contact
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

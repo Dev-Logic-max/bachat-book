@@ -85,6 +85,28 @@ export function ConfirmDeleteModal({
       onClose={onClose}
       title={title}
       icon={<AlertTriangle size={16} />}
+      footer={
+        <>
+          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
+            Cancel
+          </Button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={busy}
+            className={cn(
+              "bg-loss rounded-control px-4 py-2 text-xs font-semibold text-white transition-opacity",
+              "hover:opacity-90 disabled:opacity-50",
+            )}
+          >
+            {busy
+              ? "Deleting…"
+              : hasLinks && cascade
+                ? `${confirmLabel} all`
+                : confirmLabel}
+          </button>
+        </>
+      }
     >
       <div className="space-y-4">
         {/* What is being deleted */}
@@ -162,27 +184,6 @@ export function ConfirmDeleteModal({
         )}
 
         <p className="text-faint text-[11.5px]">This cannot be undone.</p>
-
-        <div className="flex items-center justify-end gap-2 pt-1">
-          <Button type="button" variant="ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </Button>
-          <button
-            type="button"
-            onClick={handleConfirm}
-            disabled={busy}
-            className={cn(
-              "bg-loss rounded-control px-4 py-2 text-xs font-semibold text-white transition-opacity",
-              "hover:opacity-90 disabled:opacity-50",
-            )}
-          >
-            {busy
-              ? "Deleting…"
-              : hasLinks && cascade
-                ? `${confirmLabel} all`
-                : confirmLabel}
-          </button>
-        </div>
       </div>
     </Modal>
   );

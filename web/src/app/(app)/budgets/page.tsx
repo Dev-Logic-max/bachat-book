@@ -219,8 +219,23 @@ export default function BudgetsPage() {
       )}
 
       {/* Add Budget Modal */}
-      <Modal isOpen={addModalOpen} onClose={() => setAddModalOpen(false)} title="Set Category Budget">
-        <form onSubmit={handleAddBudget} className="space-y-4">
+      <Modal
+        isOpen={addModalOpen}
+        onClose={() => setAddModalOpen(false)}
+        title="Set Category Budget"
+        onSubmit={handleAddBudget}
+        footer={
+          <>
+            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" isLoading={submitting}>
+              Save Budget
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4">
           <Select
             label="Category"
             value={selectedCategoryId}
@@ -240,15 +255,7 @@ export default function BudgetsPage() {
             required
           />
 
-          <div className="flex justify-end gap-3 pt-3 border-t border-border">
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Budget
-            </Button>
-          </div>
-        </form>
+        </div>
       </Modal>
     </div>
   );

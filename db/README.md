@@ -22,9 +22,50 @@ Hand-copying SQL here instead would drift from what is actually applied.
 | `0001_identity_households_plans` | enums, `profiles`, `user_roles`, `households`, `household_members`, `plans`, `subscriptions`, `preferences`, RLS helpers, `handle_new_user` trigger, all RLS policies |
 | `0002_plan_tiers` | Free (`Bachat`) and Pro (`Bachat Pro`) rows with `limits` as JSON |
 | `0003_lock_down_function_execute` | Revoked REST-RPC access to trigger functions and `anon` access to the RLS helpers |
+| `single_ledger_retire_quick_entries` | **Dropped `quick_entries`** and its three sync triggers. Added `transactions.created_by`, `transactions.is_opening`, `transactions_amount_sign_check`. Dropped `accounts.allow_entry_link`. |
+| `account_lock_and_soft_delete` | Added `accounts.is_locked` (+ `accounts_cash_never_locked`), `accounts.deleted_at`, and `assert_account_accepts_movement` on `transactions` |
 
 Modules M2 onward write their own migrations when they start. Do not write
 schema for a module before building it.
+
+---
+
+## One ledger
+
+`transactions` is the only store of money movement. There is no second table for
+"quick entries" — there was, and every gap between the two copies was a bug:
+changing an entry's account was a silent no-op, and unlinking left the
+transaction behind so the account stayed debited with nothing explaining it.
+
+Entries and Transactions are two **filtered views** of the same rows:
+
+| Screen | Filter |
+|---|---|
+| Entries | `type in ('income','expense') and not is_opening` — every account, cash included |
+| Transactions | `type = 'transfer'` **or** the account is `checking` / `savings` / `wallet` |
+| Accounts | the balances those rows sum to |
+
+- `amount_paisa` is **signed**; `transactions_amount_sign_check` ties the sign to
+  `type` (transfers exempt — their two legs carry opposite signs). Read the sign
+  when rendering, never `type`.
+- `is_opening` marks a balance an account STARTED with. Excluded from every
+  "money in" figure, or the opening position counts as income. New accounts start
+  at zero and are funded by a visible income entry, so nothing writes this now.
+- A **transfer is two rows** pointing at each other through
+  `linked_transaction_id`. Delete them as a pair; one leg alone creates money.
+- `sync_account_balance_trigger` derives `accounts.balance_paisa`. Never write a
+  balance by hand — the next movement silently undoes it.
+
+## Account state
+
+| Column | Meaning |
+|---|---|
+| `is_archived` | Deactivated. Reversible, hidden from pickers, excluded from the held total, records intact. |
+| `deleted_at` | Soft-deleted. Permanent. Never a real `DELETE` — removing the rows would rewrite closed months. Past transactions survive and render a "Deleted account" tag. |
+| `is_locked` | Savings you may pay into but never spend from. Never valid for `cash`, which is the fallback every entry lands on. |
+
+`assert_account_accepts_movement` enforces all three in the database. A disabled
+dropdown option stops a click, not a statement import or a REST call.
 
 ---
 

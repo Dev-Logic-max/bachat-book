@@ -179,6 +179,34 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["subscriptions"]["Insert"]>;
         Relationships: [];
       };
+      household_invitations: {
+        Row: {
+          id: string;
+          household_id: string;
+          token: string;
+          role: HouseholdRole;
+          email: string | null;
+          created_by: string;
+          expires_at: string;
+          accepted_at: string | null;
+          accepted_by: string | null;
+          revoked_at: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          token: string;
+          role?: HouseholdRole;
+          email?: string | null;
+          created_by: string;
+          expires_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["household_invitations"]["Insert"]> & {
+          revoked_at?: string | null;
+        };
+        Relationships: [];
+      };
       preferences: {
         Row: {
           user_id: string;
@@ -878,6 +906,16 @@ export type Database = {
       is_household_member: { Args: { _household_id: string }; Returns: boolean };
       is_household_owner: { Args: { _household_id: string }; Returns: boolean };
       is_platform_admin: { Args: Record<never, never>; Returns: boolean };
+      create_invitation: {
+        Args: { _household_id: string; _role?: HouseholdRole; _email?: string | null };
+        Returns: string;
+      };
+      invitation_preview: { Args: { _token: string }; Returns: Json };
+      accept_invitation: { Args: { _token: string }; Returns: Json };
+      add_member_by_email: {
+        Args: { _household_id: string; _email: string; _role?: HouseholdRole };
+        Returns: Json;
+      };
       user_plan_limits: { Args: { _user_id: string }; Returns: Json };
       user_workspace_limit: { Args: { _user_id: string }; Returns: number };
       user_member_limit: { Args: { _user_id: string }; Returns: number };

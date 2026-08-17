@@ -120,8 +120,16 @@ migration written before any screen exists is a 40-table migration that gets rew
 
 ## 3. Plans — Free vs Pro
 
-| | Free | Pro |
+**A plan belongs to a person, not a workspace.** `subscriptions` is keyed by
+`user_id`; a workspace runs on whatever plan its **owner** is on, so a free guest
+inside a Pro workspace gets Pro there. New accounts open on a **14-day Pro
+trial**.
+
+| | Free (`Bachat`) | Pro (`Bachat Pro`) |
 |---|---|---|
+| Price | Rs 0 | **Rs 799/mo · Rs 7,670/yr** (20% off) |
+| Workspaces | **2** | **5** |
+| Seats per workspace | **2** (incl. owner) | **10** (incl. owner) |
 | Accounts | 3 | Unlimited |
 | Transactions | Unlimited | Unlimited |
 | Budgets | 3 categories | Unlimited + event budgets |
@@ -131,9 +139,16 @@ migration written before any screen exists is a 40-table migration that gets rew
 | Tax | Slab calculator | Filer cost meter + withholding ledger + IRIS export |
 | Investments | Manual holdings | NSS/prize-bond/gold tracking + XIRR + projections |
 | Receipts | 10/month | Unlimited + line items + FBR QR |
-| Household members | 1 | Up to 6 |
 | Wallpapers & themes | Default | All |
 | Export | CSV | CSV, PDF, IRIS-shaped |
+
+Every number above is **live in `plans.limits`** and editable by a super admin
+in Admin Console → Plans. This table records the defaults, not the source of
+truth.
+
+**Past the allowance, a workspace goes read-only rather than away.** Rank an
+owner's workspaces oldest-first; the first N stay writable. Everything in the
+rest is still readable and nothing is deleted — see `db/README.md`.
 
 Gate on **value, not volume** — the free tier has to be genuinely usable or nobody
 stays long enough to convert. Committee, Zakat and the filer cost meter are the

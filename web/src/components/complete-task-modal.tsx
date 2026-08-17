@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useLocale } from "next-intl";
 import {
   ArrowRight,
   CheckCircle2,
@@ -13,7 +14,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { CategoryIcon } from "@/components/category-icon";
+import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
+import { useSession } from "@/components/session-provider";
 import { accountSelectOptions } from "@/components/account-options";
 import type { AccountWithInstitution } from "@/components/account-options";
 import { groupCategories, todayISO } from "@/lib/ledger";
@@ -57,6 +60,12 @@ export function CompleteTaskModal({
   categories: Tables<"categories">[];
   busy?: boolean;
 }) {
+  const session = useSession();
+  // Catalogue order, this household's pruning, and the active language all come
+  // from one place so every picker in the app agrees with the others.
+  const locale = useLocale();
+  const hiddenCategoryIds = useHiddenCategoryIds(session.household?.id);
+
   const [amount, setAmount] = React.useState("");
   const [direction, setDirection] = React.useState<MovementDirection>("expense");
   const [accountId, setAccountId] = React.useState("");
@@ -96,13 +105,16 @@ export function CompleteTaskModal({
 
   const categoryOptions: SelectOption[] = React.useMemo(
     () =>
-      groupCategories(categories, direction).map(({ category, groupLabel }) => ({
+      groupCategories(categories, direction, {
+      hiddenIds: hiddenCategoryIds,
+      locale,
+    }).map(({ category, groupLabel }) => ({
         value: category.id,
-        label: category.name,
+        label: categoryLabel(category, locale),
         group: groupLabel,
         icon: <CategoryIcon icon={category.icon} size={15} />,
       })),
-    [categories, direction],
+    [categories, direction, hiddenCategoryIds, locale],
   );
   const categoryStillValid = categoryOptions.some((o) => o.value === categoryId);
   const effectiveCategoryId = categoryStillValid ? categoryId : "";

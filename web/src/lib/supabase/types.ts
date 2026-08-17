@@ -712,12 +712,36 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["institutions"]["Insert"]>;
         Relationships: [];
       };
+      household_hidden_categories: {
+        Row: {
+          household_id: string;
+          category_id: string;
+          hidden_at: string;
+        };
+        Insert: {
+          household_id: string;
+          category_id: string;
+          hidden_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["household_hidden_categories"]["Insert"]
+        >;
+        Relationships: [];
+      };
       categories: {
         Row: {
           id: string;
           name: string;
+          /** Urdu label. NULL falls back to `name` — a household's own subcategory has no translation and must not render blank. */
+          name_ur: string | null;
           icon: string;
+          /** Path under /public to the rendered art, e.g. `/categories/food.png`. NULL renders the Lucide glyph instead. */
+          art_path: string | null;
           tone: number;
+          /** Ascending display priority. Pickers lead with what people actually use, not with what sorts first alphabetically. */
+          sort_order: number;
+          /** Retired categories stay on past transactions but leave every picker. */
+          is_active: boolean;
           parent_id: string | null;
           kind: "expense" | "income" | "transfer";
           /** NULL = system catalog row, shared by every household. */
@@ -727,8 +751,12 @@ export type Database = {
         Insert: {
           id: string;
           name: string;
+          name_ur?: string | null;
           icon?: string;
+          art_path?: string | null;
           tone?: number;
+          sort_order?: number;
+          is_active?: boolean;
           parent_id?: string | null;
           kind?: "expense" | "income" | "transfer";
           household_id?: string | null;

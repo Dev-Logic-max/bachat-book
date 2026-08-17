@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useLocale } from "next-intl";
 import { X, Trash2, Split, ArrowUpRight, ArrowDownRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +9,9 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Select, RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
-import { CategoryIcon } from "@/components/category-icon";
+import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
+import { useSession } from "@/components/session-provider";
 import { LinkBadge } from "@/components/ui/row-actions";
 import { createClient } from "@/lib/supabase/client";
 import { deleteMovement, deleteTransfer } from "@/lib/ledger-actions";
@@ -39,6 +42,12 @@ export function TransactionDrawer({
   onUpdate,
 }: TransactionDrawerProps) {
   const supabase = createClient();
+  const session = useSession();
+  // Catalogue order, this household's pruning, and the active language all
+  // come from one place so every picker in the app agrees with the others.
+  const locale = useLocale();
+  const hiddenCategoryIds = useHiddenCategoryIds(session.household?.id);
+
   const { showToast } = useToast();
 
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
@@ -266,9 +275,10 @@ export function TransactionDrawer({
   const categoryOptions = groupCategories(
     categories,
     transaction.type === "transfer" ? undefined : transaction.type,
+    { hiddenIds: hiddenCategoryIds, locale },
   ).map(({ category, groupLabel }) => ({
     value: category.id,
-    label: category.name,
+    label: categoryLabel(category, locale),
     group: groupLabel,
     icon: <CategoryIcon icon={category.icon} size={15} />,
   }));

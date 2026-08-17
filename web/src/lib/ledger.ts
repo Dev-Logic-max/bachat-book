@@ -111,17 +111,43 @@ export function isEntryMovement(
 
 /**
  * Orders categories parent-first with children under them, and returns each
- * child tagged with its parent's name so a dropdown can group them.
+ * child tagged with its parent's label so a dropdown can group them.
  *
- * The DB holds 37 rows in a two-level tree; a flat alphabetical list of 37 mixes
+ * The DB holds a 152-row two-level tree; a flat alphabetical list of it mixes
  * "Electricity" between "Education" and "Entertainment" with no indication that
  * one is a bill and the others are not.
+ *
+ * CATALOGUE ORDER, not alphabetical. `sort_order` is seeded by how often a
+ * Pakistani household reaches for each category, so Food leads and Tax trails;
+ * sorting by name would open every picker on "Bakery". Household-made rows carry
+ * the default 1000 and settle after the seeded ones.
  */
 export function groupCategories(
   categories: Category[],
   kind?: "income" | "expense" | "transfer",
+  options: {
+    /**
+     * Platform defaults this household has switched off. Pass it for anything
+     * the user PICKS from — the settings screen deliberately does not, since it
+     * is the only place they can be switched back on.
+     */
+    hiddenIds?: ReadonlySet<string>;
+    /** Groups by the Urdu parent name when the language is Urdu. */
+    locale?: string;
+  } = {},
 ): Array<{ category: Category; groupLabel?: string }> {
-  const pool = kind ? categories.filter((c) => c.kind === kind) : categories;
+  const { hiddenIds, locale = "en" } = options;
+
+  const pool = categories.filter((c) => {
+    if (kind && c.kind !== kind) return false;
+    // Retired by an admin, or switched off by this household. Both leave the
+    // picker and both stay on history, which is why filtering happens here and
+    // not in the query.
+    if (!c.is_active) return false;
+    if (c.parent_id && hiddenIds?.has(c.id)) return false;
+    return true;
+  });
+
   const parents = pool.filter((c) => !c.parent_id);
   const byParent = new Map<string, Category[]>();
 
@@ -133,20 +159,25 @@ export function groupCategories(
   }
 
   const out: Array<{ category: Category; groupLabel?: string }> = [];
-  const byName = (a: Category, b: Category) => a.name.localeCompare(b.name);
+  const order = (a: Category, b: Category) =>
+    a.sort_order !== b.sort_order
+      ? a.sort_order - b.sort_order
+      : a.name.localeCompare(b.name);
+  const label = (c: Category) =>
+    locale === "ur" && c.name_ur ? c.name_ur : c.name;
 
-  for (const parent of [...parents].sort(byName)) {
-    const children = (byParent.get(parent.id) ?? []).sort(byName);
+  for (const parent of [...parents].sort(order)) {
+    const children = (byParent.get(parent.id) ?? []).sort(order);
     if (children.length === 0) {
       // A parent with no children is a leaf and selectable on its own.
       out.push({ category: parent });
       continue;
     }
-    // The parent becomes the group heading AND stays selectable, so "Food &
-    // Dining" is available when none of its children fit.
-    out.push({ category: parent, groupLabel: parent.name });
+    // The parent becomes the group heading AND stays selectable, so "Food" is
+    // available when none of its children fit.
+    out.push({ category: parent, groupLabel: label(parent) });
     for (const child of children) {
-      out.push({ category: child, groupLabel: parent.name });
+      out.push({ category: child, groupLabel: label(parent) });
     }
   }
 

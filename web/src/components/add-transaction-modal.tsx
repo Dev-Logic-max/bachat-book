@@ -1,13 +1,15 @@
 "use client";
 
 import * as React from "react";
+import { useLocale } from "next-intl";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { CategoryIcon } from "@/components/category-icon";
+import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { MerchantMark } from "@/components/merchant-mark";
 import { accountSelectOptions } from "@/components/account-options";
 import type { AccountWithInstitution } from "@/components/account-options";
@@ -56,6 +58,11 @@ export function AddTransactionModal({
 
   const { showToast } = useToast();
   const supabase = createClient();
+  // Catalogue order, this household's pruning, and the active language all
+  // come from one place so every picker in the app agrees with the others.
+  const locale = useLocale();
+  const hiddenCategoryIds = useHiddenCategoryIds(householdId);
+
 
   React.useEffect(() => {
     let active = true;
@@ -147,10 +154,13 @@ export function AddTransactionModal({
   // Parent-first with children grouped underneath. A flat alphabetical list of
   // 37 puts "Electricity" between "Education" and "Entertainment" with nothing
   // to say one is a bill and the others are not.
-  const categoryOptions: SelectOption[] = groupCategories(categories, type).map(
+  const categoryOptions: SelectOption[] = groupCategories(categories, type, {
+      hiddenIds: hiddenCategoryIds,
+      locale,
+    }).map(
     ({ category, groupLabel }) => ({
       value: category.id,
-      label: category.name,
+      label: categoryLabel(category, locale),
       group: groupLabel,
       icon: <CategoryIcon icon={category.icon} size={15} />,
     }),

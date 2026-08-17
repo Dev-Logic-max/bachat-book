@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useLocale } from "next-intl";
 import { Tags } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { CategoriesModal } from "@/components/categories-modal";
@@ -8,7 +9,8 @@ import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { CategoryIcon } from "@/components/category-icon";
+import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { DatePicker } from "@/components/ui/date-picker";
 import { accountSelectOptions } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
@@ -75,10 +77,16 @@ export function QuickAddModal({
   const [categoriesOpen, setCategoriesOpen] = React.useState(false);
 
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
+  const [catalogueKey, setCatalogueKey] = React.useState(0);
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
 
   const { showToast } = useToast();
   const supabase = createClient();
+  // Catalogue order, this household's pruning, and the active language all
+  // come from one place so every picker in the app agrees with the others.
+  const locale = useLocale();
+  const hiddenCategoryIds = useHiddenCategoryIds(householdId);
+
 
   // Re-seed whenever the modal opens or the caller switches which entry is being
   // edited. A state initialiser cannot do this — the component stays mounted
@@ -114,7 +122,12 @@ export function QuickAddModal({
 
     async function load() {
       const [catRes, accRes] = await Promise.all([
-        supabase.from("categories").select("*").order("name"),
+        // Catalogue order, not alphabetical -- groupCategories sorts on it.
+        supabase
+          .from("categories")
+          .select("*")
+          .order("sort_order")
+          .order("name"),
         supabase
           .from("accounts")
           .select("*, institutions(*)")
@@ -132,7 +145,7 @@ export function QuickAddModal({
     return () => {
       active = false;
     };
-  }, [isOpen, householdId, supabase]);
+  }, [isOpen, householdId, supabase, catalogueKey]);
 
   /*
    * Default to cash — DERIVED, not stored.
@@ -153,13 +166,16 @@ export function QuickAddModal({
 
   const categoryOptions: SelectOption[] = React.useMemo(
     () =>
-      groupCategories(categories, type).map(({ category, groupLabel }) => ({
+      groupCategories(categories, type, {
+      hiddenIds: hiddenCategoryIds,
+      locale,
+    }).map(({ category, groupLabel }) => ({
         value: category.id,
-        label: category.name,
+        label: categoryLabel(category, locale),
         group: groupLabel,
         icon: <CategoryIcon icon={category.icon} size={15} />,
       })),
-    [categories, type],
+    [categories, type, hiddenCategoryIds, locale],
   );
 
   // Switching income/expense invalidates the chosen category — the two kinds are
@@ -422,7 +438,12 @@ export function QuickAddModal({
       isOpen={categoriesOpen}
       onClose={() => setCategoriesOpen(false)}
       categories={categories}
+      householdId={householdId}
       kind={type}
+      // Adding or switching off a category from here has to show up in the
+      // picker behind it, without throwing away the half-filled entry that
+      // sent the user looking in the first place.
+      onChanged={() => setCatalogueKey((k) => k + 1)}
     />
     </>
   );

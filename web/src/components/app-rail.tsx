@@ -226,12 +226,22 @@ export function AppRail({ session }: { session?: UserSession | null }) {
         collapsed ? "w-18" : "w-62",
       )}
     >
-      {/* Pinned header: brand + workspace switcher */}
-      <div className={cn("shrink-0 pb-4 pt-6", collapsed ? "px-3" : "px-4")}>
+      {/*
+        Pinned header: the brand.
+
+        A 64px band flush to the top, matching the top bar's exactly, so the two
+        rules meet and run through as one edge across the whole app. It used to
+        be `pb-4 pt-6` around a 32px logo, which ended at 72 and missed the bar's
+        rule by enough to read as a mistake rather than a decision.
+
+        Full-bleed, so it crosses the rail the way the bar's rule crosses the
+        page. The padding lives on the inner row instead.
+      */}
+      <div className="border-navy-700 shrink-0 border-b">
         <div
           className={cn(
-            "flex min-w-0 items-center",
-            collapsed ? "justify-center" : "gap-2.5 px-1",
+            "flex h-16 min-w-0 items-center",
+            collapsed ? "justify-center px-3" : "gap-2.5 px-5",
           )}
         >
           <img
@@ -257,7 +267,7 @@ export function AppRail({ session }: { session?: UserSession | null }) {
       {/* The only scrolling region. Scrollbar hidden, still scrollable. */}
       <nav
         className={cn(
-          "scrollbar-none flex min-h-0 flex-1 flex-col overflow-y-auto py-2",
+          "scrollbar-none flex min-h-0 flex-1 flex-col overflow-y-auto pb-2 pt-4",
           collapsed ? "gap-2 px-3" : "gap-5 px-4",
         )}
       >

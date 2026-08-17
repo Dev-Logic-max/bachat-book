@@ -134,6 +134,7 @@ export type Database = {
           id: string;
           code: string;
           name: string;
+          description: string | null;
           price_monthly_paisa: number;
           price_yearly_paisa: number;
           currency: string;
@@ -145,6 +146,7 @@ export type Database = {
           id?: string;
           code: string;
           name: string;
+          description?: string | null;
           price_monthly_paisa?: number;
           price_yearly_paisa?: number;
           currency?: string;
@@ -177,6 +179,17 @@ export type Database = {
           current_period_end?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["subscriptions"]["Insert"]>;
+        Relationships: [];
+      };
+      platform_settings: {
+        Row: {
+          key: string;
+          value: Json;
+          updated_at: string;
+          updated_by: string | null;
+        };
+        Insert: { key: string; value?: Json; updated_by?: string | null };
+        Update: Partial<Database["public"]["Tables"]["platform_settings"]["Insert"]>;
         Relationships: [];
       };
       household_invitations: {
@@ -906,6 +919,16 @@ export type Database = {
       is_household_member: { Args: { _household_id: string }; Returns: boolean };
       is_household_owner: { Args: { _household_id: string }; Returns: boolean };
       is_platform_admin: { Args: Record<never, never>; Returns: boolean };
+      admin_set_subscription: {
+        Args: {
+          _user_id: string;
+          _plan_code: string;
+          _status?: SubscriptionStatus;
+          _period_end?: string | null;
+          _trial_ends_at?: string | null;
+        };
+        Returns: Json;
+      };
       create_invitation: {
         Args: { _household_id: string; _role?: HouseholdRole; _email?: string | null };
         Returns: string;

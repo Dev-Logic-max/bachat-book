@@ -4,8 +4,10 @@ import * as React from "react";
 import Link from "next/link";
 import {
   Building2,
+  Cog,
   CreditCard,
   Landmark,
+  Pencil,
   Search,
   ShieldCheck,
   User,
@@ -14,13 +16,18 @@ import {
 import { Input } from "@/components/ui/input";
 import { Avatar } from "@/components/ui/avatar";
 import { Reveal } from "@/components/reveal";
+import { AdminPlanEditor } from "@/components/admin-plan-editor";
+import { AdminPlatformSettings } from "@/components/admin-platform-settings";
+import { AdminGrantPlanModal } from "@/components/admin-grant-plan-modal";
 import { createClient } from "@/lib/supabase/client";
+import { getEmailKeyPresent } from "@/lib/admin-actions";
 import { formatName } from "@/lib/format";
+import { daysUntil, expiryTone, periodEndsAt, subscriptionLabel } from "@/lib/plan";
 import { cn } from "@/lib/utils";
 
 import type { AppRole, HouseholdKind, Tables } from "@/lib/supabase/types";
 
-type Tab = "workspaces" | "people";
+type Tab = "workspaces" | "people" | "plans" | "settings";
 
 /**
  * The platform console.
@@ -48,6 +55,21 @@ export default function AdminConsolePage() {
   const [loading, setLoading] = React.useState(true);
   const [tab, setTab] = React.useState<Tab>("workspaces");
   const [query, setQuery] = React.useState("");
+  const [grantFor, setGrantFor] = React.useState<Tables<"profiles"> | null>(null);
+  const [refresh, setRefresh] = React.useState(0);
+  const [emailKeyPresent, setEmailKeyPresent] = React.useState(false);
+
+  // The key itself never leaves the server; this only reports whether one is
+  // set, so the settings screen can say what is missing.
+  React.useEffect(() => {
+    let active = true;
+    getEmailKeyPresent().then((present) => {
+      if (active) setEmailKeyPresent(present);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   React.useEffect(() => {
     let active = true;
@@ -76,7 +98,9 @@ export default function AdminConsolePage() {
     return () => {
       active = false;
     };
-  }, [supabase]);
+    // `refresh` re-runs this after a subscription is changed, so the row the
+    // operator just edited shows its new plan without a page reload.
+  }, [supabase, refresh]);
 
   const profileById = React.useMemo(
     () => new Map(profiles.map((p) => [p.id, p])),
@@ -218,6 +242,8 @@ export default function AdminConsolePage() {
               [
                 { v: "workspaces" as const, label: "Workspaces", Icon: Building2 },
                 { v: "people" as const, label: "People", Icon: User },
+                { v: "plans" as const, label: "Plans", Icon: CreditCard },
+                { v: "settings" as const, label: "Settings", Icon: Cog },
               ]
             ).map(({ v, label, Icon }) => (
               <button
@@ -326,24 +352,30 @@ export default function AdminConsolePage() {
             </ul>
           </div>
         </Reveal>
-      ) : (
+      ) : tab === "people" ? (
         <Reveal index={2}>
           <div className="bg-surface border-border overflow-hidden rounded-panel border shadow-sm">
             <ul className="divide-border divide-y">
-              <li className="bg-surface-subtle text-muted grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-widest lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1.4fr)_110px]">
+              <li className="bg-surface-subtle text-muted grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 px-4 py-2 text-[10px] font-semibold uppercase tracking-widest lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1.1fr)_150px_110px]">
                 <span>Person</span>
                 <span className="hidden lg:block">Workspaces</span>
+                <span className="hidden lg:block">Plan</span>
                 <span className="text-right">Platform role</span>
               </li>
 
               {visibleProfiles.map((p) => {
                 const theirs = householdsByUser.get(p.id) ?? [];
                 const role = rolesByUser.get(p.id) ?? "user";
+                const sub = subByUser.get(p.id) ?? null;
+                const plan = sub ? planById.get(sub.plan_id) : null;
+                const ends = periodEndsAt(sub);
+                const left = daysUntil(ends);
+                const tone = expiryTone(left);
 
                 return (
                   <li
                     key={p.id}
-                    className="hover:bg-surface-subtle/60 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-2.5 transition-colors lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1.4fr)_110px]"
+                    className="hover:bg-surface-subtle/60 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 px-4 py-2.5 transition-colors lg:grid-cols-[minmax(0,1.3fr)_minmax(0,1.1fr)_150px_110px]"
                   >
                     <span className="flex min-w-0 items-center gap-2">
                       <Avatar
@@ -372,6 +404,39 @@ export default function AdminConsolePage() {
                       </span>
                     </span>
 
+                    {/*
+                      Plan, status and time remaining — the three things an
+                      operator is asked about. Still no money: what someone pays
+                      is a platform fact, what their household holds is not.
+                    */}
+                    <span className="hidden min-w-0 lg:block">
+                      <button
+                        type="button"
+                        onClick={() => setGrantFor(p)}
+                        className="border-border hover:border-brass hover:bg-surface-subtle flex w-full items-center gap-1.5 rounded-control border px-2 py-1 text-left transition-colors"
+                      >
+                        <span className="min-w-0 flex-1">
+                          <span className="text-foreground-2 block truncate text-[11.5px] font-medium">
+                            {plan?.name ?? "No plan"}
+                          </span>
+                          <span
+                            className={cn(
+                              "block text-[10px] tabular-nums",
+                              tone === "expired" || tone === "urgent"
+                                ? "text-loss"
+                                : tone === "soon"
+                                  ? "text-brass-strong"
+                                  : "text-faint",
+                            )}
+                          >
+                            {subscriptionLabel(sub, plan?.code ?? "free")}
+                            {left !== null && left > 0 && ` · ${left}d left`}
+                          </span>
+                        </span>
+                        <Pencil size={11} className="text-faint shrink-0" />
+                      </button>
+                    </span>
+
                     <span className="flex justify-end">
                       <RoleChip role={role} />
                     </span>
@@ -381,7 +446,30 @@ export default function AdminConsolePage() {
             </ul>
           </div>
         </Reveal>
+      ) : tab === "plans" ? (
+        <Reveal index={2}>
+          <AdminPlanEditor />
+        </Reveal>
+      ) : (
+        <Reveal index={2}>
+          <AdminPlatformSettings emailKeyPresent={emailKeyPresent} />
+        </Reveal>
       )}
+
+      {/*
+        Keyed on the person so opening a different row remounts the modal with
+        their subscription. Re-seeding it with an effect would be a synchronous
+        setState in an effect, which React Compiler rejects.
+      */}
+      <AdminGrantPlanModal
+        key={grantFor?.id ?? "none"}
+        isOpen={grantFor !== null}
+        onClose={() => setGrantFor(null)}
+        profile={grantFor}
+        plans={plans}
+        current={grantFor ? (subByUser.get(grantFor.id) ?? null) : null}
+        onSaved={() => setRefresh((n) => n + 1)}
+      />
     </div>
   );
 }

@@ -201,6 +201,7 @@ export default function CalendarPage() {
             actions={[
               {
                 label: "Add event",
+              shortLabel: "Event",
                 hint: "A bill date, a birthday, or anything with a day attached",
                 icon: Plus,
                 tone: "primary",

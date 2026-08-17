@@ -420,6 +420,7 @@ function TransactionsPageInner() {
             },
             {
               label: "Add transaction",
+              shortLabel: "Add",
               hint: "Log money in or out of a bank or wallet",
               icon: Plus,
               tone: "primary",

@@ -36,6 +36,7 @@ export default function InvestmentsVaultPage() {
           actions={[
             {
               label: "Add holding",
+              shortLabel: "Holding",
               hint: "Not wired up yet — this module is still read-only",
               icon: Plus,
               tone: "primary",

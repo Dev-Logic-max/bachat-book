@@ -327,6 +327,7 @@ export default function TasksPage() {
             actions={[
               {
                 label: "New task",
+              shortLabel: "Task",
                 hint: "A one-off, a repeating bill, or something that moves money",
                 icon: Plus,
                 tone: "primary",

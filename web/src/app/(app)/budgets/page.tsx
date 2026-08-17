@@ -136,6 +136,7 @@ export default function BudgetsPage() {
           actions={[
             {
               label: "Set budget",
+              shortLabel: "Budget",
               hint: "Cap what one category can take in a month",
               icon: Plus,
               tone: "primary",

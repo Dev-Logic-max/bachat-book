@@ -384,11 +384,25 @@ export default function EntriesPage() {
         <PageActions
           title="Entries"
           actions={[
+            /*
+             * BOTH stay on screen at every width, and neither is the filled
+             * pill. This is the one page where the two actions are genuinely
+             * equal in weight, and the red down / green up pair says which is
+             * which far better than one of them being darker — `tone: primary`
+             * drops the glyph tint, so making either one filled would throw
+             * away the only thing distinguishing them at a glance.
+             *
+             * "Add expense" used to be the secondary action, which put the
+             * single most common thing anyone does in this app behind a ⋮ menu
+             * on every phone.
+             */
             {
               label: "Add expense",
+              shortLabel: "Expense",
               hint: "Money out — defaults to cash",
               icon: ArrowDownRight,
               glyphClass: "text-loss",
+              alwaysVisible: true,
               onClick: () => {
                 setAddType("expense");
                 setEditing(null);
@@ -397,10 +411,11 @@ export default function EntriesPage() {
             },
             {
               label: "Add income",
+              shortLabel: "Income",
               hint: "Money in — pick the account it landed in",
-              icon: Plus,
-              tone: "primary",
+              icon: ArrowUpRight,
               glyphClass: "text-gain",
+              alwaysVisible: true,
               onClick: () => {
                 setAddType("income");
                 setEditing(null);

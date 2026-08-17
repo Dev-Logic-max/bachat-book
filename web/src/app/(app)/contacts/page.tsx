@@ -123,6 +123,7 @@ export default function ContactsPage() {
           actions={[
             {
               label: "Add contact",
+              shortLabel: "Contact",
               hint: "A person you pay, owe, or share a committee with",
               icon: Plus,
               tone: "primary",

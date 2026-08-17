@@ -147,6 +147,7 @@ export default function AccountsPage() {
           actions={[
             {
               label: "Add account",
+              shortLabel: "Account",
               hint: "A bank or mobile wallet you hold money with",
               icon: Plus,
               tone: "primary",

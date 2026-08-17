@@ -117,6 +117,7 @@ export default function CommitteesPage() {
           actions={[
             {
               label: "Create committee",
+              shortLabel: "Committee",
               hint: "A new BC pool with its members and draw month",
               icon: Plus,
               tone: "primary",

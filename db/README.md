@@ -24,6 +24,12 @@ Hand-copying SQL here instead would drift from what is actually applied.
 | `0003_lock_down_function_execute` | Revoked REST-RPC access to trigger functions and `anon` access to the RLS helpers |
 | `single_ledger_retire_quick_entries` | **Dropped `quick_entries`** and its three sync triggers. Added `transactions.created_by`, `transactions.is_opening`, `transactions_amount_sign_check`. Dropped `accounts.allow_entry_link`. |
 | `account_lock_and_soft_delete` | Added `accounts.is_locked` (+ `accounts_cash_never_locked`), `accounts.deleted_at`, and `assert_account_accepts_movement` on `transactions` |
+| `plan_pricing_and_workspace_limits` | Fixed the 1000× price error (Pro was stored as Rs 900,000/mo). Added `workspaces` to `plans.limits`; free 2/2, pro 5/10 |
+| `subscriptions_move_to_user` | **`subscriptions.household_id` → `user_id`**, one row per person, unique. Best plan survived the collapse |
+| `plan_quota_helpers` | `user_plan_limits`, `user_workspace_limit`, `user_member_limit`, `workspace_is_active`, and the `assert_workspace_quota` / `assert_member_quota` triggers |
+| `read_only_workspace_policies` | Split the single `FOR ALL` policy on 12 tenant tables into select + insert/update/delete, gating only the writes |
+| `workspace_effective_plan` | `household_plan_limits`, `household_plan_code`, and the `workspace_access` view (`security_invoker`) |
+| `revoke_plan_helpers_from_anon` | Removed the default `PUBLIC` execute grant the new helpers were created with |
 
 Modules M2 onward write their own migrations when they start. Do not write
 schema for a module before building it.
@@ -86,6 +92,30 @@ dropdown option stops a click, not a statement import or a REST call.
 They must stay executable by `authenticated` — a policy expression is evaluated
 as the querying role, so revoking that breaks every policy that calls them.
 
+### Plans and read-only workspaces
+
+A plan belongs to a **person**: `subscriptions` is keyed by `user_id`, one row
+each. A workspace's entitlements are its **owner's** — resolve them with
+`household_plan_code()` / `household_plan_limits()`, never from whoever is
+looking, or a free member inside a Pro workspace sees different numbers from the
+owner on the same screen.
+
+Which workspaces are live is **derived, never stored**:
+
+> Rank an owner's workspaces oldest-first. The first N are writable, where N is
+> their plan's `workspaces` limit. The rest are read-only.
+
+The personal workspace created at sign-up is always the oldest, so it is
+structurally always writable — there is no "protected" flag to set and no way for
+a downgrade to strand someone outside their own default workspace. A lapsed
+subscription (`past_due` / `canceled`) falls through to the free limits inside
+`user_plan_limits`, so the downgrade needs no separate job.
+
+Read-only is a **write** restriction only. Reads stay open: the ledger is the
+user's own financial history, and hiding it reads as data loss. That is why the
+12 tenant tables each carry four policies instead of one `FOR ALL` — `FOR ALL`
+cannot express "select is looser than the rest".
+
 ---
 
 ## Seed account
@@ -115,6 +145,25 @@ deletes any prior seed identity first, households before users because
 ## Verifying isolation
 
 Run this after any schema change. It must show the stranger seeing zero rows.
+
+**The SQL test is not sufficient on its own.** It runs as `postgres` with
+`set role`; PostgREST is what the app actually talks to, and grants can differ
+there. Sign in for real and compare. Last run, with the owner temporarily
+downgraded to free so their third workspace fell out of the allowance:
+
+| Check | Result |
+|---|---|
+| anon → `transactions` | `401` permission denied |
+| anon → `workspace_access` | `401` permission denied |
+| signed in → `workspace_access` | `200`, rank 3 returns `is_active: false` |
+| read-only workspace, SELECT | `200`, rows still visible |
+| read-only workspace, INSERT | `403` RLS violation |
+| active workspace, INSERT | `201` created |
+| third workspace on free, INSERT | `400` "Your plan allows 2 workspace(s)." |
+
+That last pair is the one worth re-running: a false positive on the active
+workspace locks a paying user out of their own ledger, which is worse than a
+missed block.
 
 ```sql
 create temp table rls_check(who text, households int, members int, subscriptions int);

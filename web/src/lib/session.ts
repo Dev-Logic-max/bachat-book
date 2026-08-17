@@ -1,5 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-import type { Tables } from "@/lib/supabase/types";
+import type { Tables, Views } from "@/lib/supabase/types";
 
 export type UserSession = {
   user: {
@@ -9,7 +9,16 @@ export type UserSession = {
   profile: Tables<"profiles"> | null;
   household: Tables<"households"> | null;
   preferences: Tables<"preferences"> | null;
+  /** The signed-in user's OWN plan. Governs how many workspaces they may create. */
   subscription: Tables<"subscriptions"> | null;
+  /**
+   * The active workspace's entitlements, resolved from its OWNER's plan.
+   *
+   * Gate features on this, never on `subscription` — a free member inside a Pro
+   * workspace is entitled to Pro *there*, and reading their own plan instead
+   * would show them different numbers from the owner on the same screen.
+   */
+  workspace: Views<"workspace_access"> | null;
 };
 
 export async function getSession(): Promise<UserSession | null> {
@@ -60,15 +69,23 @@ export async function getSession(): Promise<UserSession | null> {
     }
   }
 
-  // Fetch active subscription for household
-  let subscription: Tables<"subscriptions"> | null = null;
+  // The user's own plan — one row per person, keyed by user_id.
+  const { data: subscription } = await supabase
+    .from("subscriptions")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
+  // The active workspace's entitlements, which follow its OWNER's plan and so
+  // may differ from `subscription` above when the user is someone else's guest.
+  let workspace: Views<"workspace_access"> | null = null;
   if (household) {
-    const { data: sub } = await supabase
-      .from("subscriptions")
+    const { data: ws } = await supabase
+      .from("workspace_access")
       .select("*")
-      .eq("household_id", household.id)
-      .single();
-    subscription = sub;
+      .eq("id", household.id)
+      .maybeSingle();
+    workspace = ws;
   }
 
   return {
@@ -80,5 +97,6 @@ export async function getSession(): Promise<UserSession | null> {
     household,
     preferences,
     subscription,
+    workspace,
   };
 }

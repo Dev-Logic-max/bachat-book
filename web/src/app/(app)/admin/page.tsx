@@ -83,8 +83,10 @@ export default function AdminConsolePage() {
     [profiles],
   );
   const planById = React.useMemo(() => new Map(plans.map((p) => [p.id, p])), [plans]);
-  const subByHousehold = React.useMemo(
-    () => new Map(subs.map((s) => [s.household_id, s])),
+  // Plans belong to the user now, so a workspace's plan is looked up through
+  // its OWNER rather than by its own id.
+  const subByUser = React.useMemo(
+    () => new Map(subs.map((s) => [s.user_id, s])),
     [subs],
   );
   const rolesByUser = React.useMemo(() => {
@@ -266,7 +268,7 @@ export default function AdminConsolePage() {
 
               {visibleHouseholds.map((h) => {
                 const owner = profileById.get(h.owner_id);
-                const sub = subByHousehold.get(h.id);
+                const sub = subByUser.get(h.owner_id);
                 const plan = sub ? planById.get(sub.plan_id) : null;
                 const count = membersByHousehold.get(h.id)?.length ?? 0;
 

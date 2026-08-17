@@ -134,44 +134,46 @@ export type Database = {
           id: string;
           code: string;
           name: string;
-          description: string | null;
           price_monthly_paisa: number;
-          price_annual_paisa: number;
+          price_yearly_paisa: number;
+          currency: string;
           limits: Json;
-          features: Json;
           sort_order: number;
+          created_at: string;
         };
         Insert: {
           id?: string;
           code: string;
           name: string;
-          description?: string | null;
           price_monthly_paisa?: number;
-          price_annual_paisa?: number;
+          price_yearly_paisa?: number;
+          currency?: string;
           limits?: Json;
-          features?: Json;
           sort_order?: number;
         };
         Update: Partial<Database["public"]["Tables"]["plans"]["Insert"]>;
         Relationships: [];
       };
+      // A plan belongs to a PERSON, not a workspace. A workspace's effective
+      // plan is its OWNER's — resolve it with household_plan_code(), never by
+      // looking up the current user.
       subscriptions: {
         Row: {
           id: string;
-          household_id: string;
+          user_id: string;
           plan_id: string;
           status: SubscriptionStatus;
-          current_period_start: string | null;
+          trial_ends_at: string | null;
           current_period_end: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: {
           id?: string;
-          household_id: string;
+          user_id: string;
           plan_id: string;
           status?: SubscriptionStatus;
-          current_period_start?: string | null;
+          trial_ends_at?: string | null;
           current_period_end?: string | null;
         };
         Update: Partial<Database["public"]["Tables"]["subscriptions"]["Insert"]>;
@@ -850,12 +852,38 @@ export type Database = {
         Relationships: [];
       };
     };
-    Views: Record<never, never>;
+    Views: {
+      // One row per workspace the caller can see, carrying rank, active state,
+      // effective plan and seat usage — everything the switcher and the
+      // workspaces page need, in one query instead of four.
+      workspace_access: {
+        Row: {
+          id: string;
+          name: string;
+          kind: HouseholdKind;
+          owner_id: string;
+          created_at: string;
+          owner_rank: number;
+          is_active: boolean;
+          plan_code: string;
+          workspace_limit: number;
+          member_limit: number;
+          member_count: number;
+        };
+        Relationships: [];
+      };
+    };
     Functions: {
       has_role: { Args: { _user_id: string; _role: AppRole }; Returns: boolean };
       is_household_member: { Args: { _household_id: string }; Returns: boolean };
       is_household_owner: { Args: { _household_id: string }; Returns: boolean };
       is_platform_admin: { Args: Record<never, never>; Returns: boolean };
+      user_plan_limits: { Args: { _user_id: string }; Returns: Json };
+      user_workspace_limit: { Args: { _user_id: string }; Returns: number };
+      user_member_limit: { Args: { _user_id: string }; Returns: number };
+      workspace_is_active: { Args: { _household_id: string }; Returns: boolean };
+      household_plan_limits: { Args: { _household_id: string }; Returns: Json };
+      household_plan_code: { Args: { _household_id: string }; Returns: string };
     };
     Enums: {
       app_role: AppRole;
@@ -870,6 +898,8 @@ export type Database = {
 
 export type Tables<T extends keyof Database["public"]["Tables"]> =
   Database["public"]["Tables"][T]["Row"];
+export type Views<T extends keyof Database["public"]["Views"]> =
+  Database["public"]["Views"][T]["Row"];
 export type TablesInsert<T extends keyof Database["public"]["Tables"]> =
   Database["public"]["Tables"][T]["Insert"];
 export type TablesUpdate<T extends keyof Database["public"]["Tables"]> =

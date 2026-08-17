@@ -87,7 +87,14 @@ export default function WorkspacesSettingsPage() {
 
     if (hErr || !h) {
       setSubmitting(false);
-      showToast({ type: "error", title: "Error creating workspace", description: hErr?.message });
+      // The workspace cap is a database trigger, so this is where a user on the
+      // free plan trying for a third workspace lands. Its message already names
+      // the allowance, which beats a generic "Error creating workspace".
+      showToast({
+        type: "error",
+        title: "Could not create workspace",
+        description: hErr?.message ?? "Something went wrong.",
+      });
       return;
     }
 
@@ -98,15 +105,8 @@ export default function WorkspacesSettingsPage() {
       role: "owner",
     });
 
-    // Add subscription
-    const { data: freePlan } = await supabase.from("plans").select("id").eq("code", "free").single();
-    if (freePlan) {
-      await supabase.from("subscriptions").insert({
-        household_id: h.id,
-        plan_id: freePlan.id,
-        status: "active",
-      });
-    }
+    // No subscription insert: plans belong to the USER, not the workspace. This
+    // workspace inherits the plan of whoever owns it.
 
     setSubmitting(false);
     showToast({ type: "success", title: "Workspace created", description: `"${name}" is ready to use.` });

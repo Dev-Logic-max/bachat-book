@@ -103,7 +103,7 @@ export default function TasksPage() {
           .eq("household_id", householdId)
           .is("deleted_at", null)
           .order("created_at"),
-        supabase.from("categories").select("*").order("name"),
+        supabase.from("categories").select("*").order("sort_order").order("name"),
       ]);
 
       if (!active) return;

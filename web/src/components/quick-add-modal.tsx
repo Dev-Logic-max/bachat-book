@@ -1,21 +1,18 @@
 "use client";
 
 import * as React from "react";
-import { useLocale } from "next-intl";
-import { Tags } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
-import { CategoriesModal } from "@/components/categories-modal";
+import { CategoryPicker } from "@/components/category-picker";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { CategoryIcon, categoryLabel } from "@/components/category-icon";
 import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { DatePicker } from "@/components/ui/date-picker";
 import { accountSelectOptions } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
 import { ensureCashAccount } from "@/lib/ledger-actions";
-import { groupCategories, toSignedPaisa, todayISO } from "@/lib/ledger";
+import { toSignedPaisa, todayISO } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 
 import type { SelectOption } from "@/components/ui/select";
@@ -74,7 +71,6 @@ export function QuickAddModal({
   const [entryDate, setEntryDate] = React.useState(todayISO());
   const [accountId, setAccountId] = React.useState("");
   const [loading, setLoading] = React.useState(false);
-  const [categoriesOpen, setCategoriesOpen] = React.useState(false);
 
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
   const [catalogueKey, setCatalogueKey] = React.useState(0);
@@ -82,9 +78,6 @@ export function QuickAddModal({
 
   const { showToast } = useToast();
   const supabase = createClient();
-  // Catalogue order, this household's pruning, and the active language all
-  // come from one place so every picker in the app agrees with the others.
-  const locale = useLocale();
   const hiddenCategoryIds = useHiddenCategoryIds(householdId);
 
 
@@ -164,24 +157,16 @@ export function QuickAddModal({
     accounts.find((a) => a.type === "cash" && !a.is_archived && !a.deleted_at)?.id ?? "";
   const effectiveAccountId = accountId || cashAccountId;
 
-  const categoryOptions: SelectOption[] = React.useMemo(
-    () =>
-      groupCategories(categories, type, {
-      hiddenIds: hiddenCategoryIds,
-      locale,
-    }).map(({ category, groupLabel }) => ({
-        value: category.id,
-        label: categoryLabel(category, locale),
-        group: groupLabel,
-        icon: <CategoryIcon icon={category.icon} size={15} />,
-      })),
-    [categories, type, hiddenCategoryIds, locale],
-  );
-
-  // Switching income/expense invalidates the chosen category — the two kinds are
-  // disjoint sets in the DB.
-  const categoryStillValid = categoryOptions.some((o) => o.value === categoryId);
-  const effectiveCategoryId = categoryStillValid ? categoryId : "";
+  /*
+   * Switching income/expense invalidates the chosen category — the two kinds are
+   * disjoint sets in the DB. Derived during render rather than reset in an
+   * effect, which React Compiler rejects.
+   *
+   * CategoryPicker splits this single id back into its two fields, so there is
+   * no second piece of state here that could disagree with what gets saved.
+   */
+  const chosenCategory = categories.find((c) => c.id === categoryId);
+  const effectiveCategoryId = chosenCategory?.kind === type ? categoryId : "";
 
   /*
    * Unavailable accounts are SHOWN, not hidden — greyed with the reason on the
@@ -376,28 +361,15 @@ export function QuickAddModal({
           up mid-form, and the only answer used to be Settings → Categories,
           which meant abandoning a part-filled entry to find out.
         */}
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-foreground-2 text-xs font-medium">Category</span>
-            <button
-              type="button"
-              onClick={() => setCategoriesOpen(true)}
-              className="text-brass-strong hover:bg-brass-soft -me-1 flex items-center gap-1 rounded-control px-1.5 py-0.5 text-[11px] font-medium transition-colors"
-            >
-              <Tags size={11} />
-              Manage
-            </button>
-          </div>
-          <RichSelect
-            value={effectiveCategoryId}
-            onChange={setCategoryId}
-            options={categoryOptions}
-            placeholder={
-              categoryOptions.length === 0 ? "Loading categories…" : "Choose a category"
-            }
-            emptyMessage="No categories for this type"
-          />
-        </div>
+        <CategoryPicker
+          value={effectiveCategoryId}
+          onChange={setCategoryId}
+          categories={categories}
+          kind={type}
+          householdId={householdId}
+          hiddenIds={hiddenCategoryIds}
+          onCatalogueChanged={() => setCatalogueKey((k) => k + 1)}
+        />
 
         {/*
          * Required, not optional. There is no "standalone entry" any more — an
@@ -429,22 +401,6 @@ export function QuickAddModal({
       </div>
     </Modal>
 
-    {/*
-      Sibling, not a child. Nested inside the body it would sit inside this
-      form's <form> element, and Modal keeps its own scroll lock and Escape
-      handling per dialog — see the stack in components/ui/modal.tsx.
-    */}
-    <CategoriesModal
-      isOpen={categoriesOpen}
-      onClose={() => setCategoriesOpen(false)}
-      categories={categories}
-      householdId={householdId}
-      kind={type}
-      // Adding or switching off a category from here has to show up in the
-      // picker behind it, without throwing away the half-filled entry that
-      // sent the user looking in the first place.
-      onChanged={() => setCatalogueKey((k) => k + 1)}
-    />
     </>
   );
 }

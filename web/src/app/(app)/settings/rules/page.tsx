@@ -45,7 +45,11 @@ export default function RulesSettingsPage() {
           .select("*, categories(*), merchants(*)")
           .eq("household_id", householdId)
           .order("created_at", { ascending: false }),
-        supabase.from("categories").select("*").order("name", { ascending: true }),
+        supabase
+          .from("categories")
+          .select("*")
+          .order("sort_order")
+          .order("name"),
         supabase.from("merchants").select("*").order("name", { ascending: true }),
       ]);
 

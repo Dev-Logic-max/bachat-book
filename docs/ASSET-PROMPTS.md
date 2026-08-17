@@ -79,46 +79,109 @@ They unblock the most screens.
 
 ---
 
-## Category dioramas — the set worth building next
+## Category icons — 26 renders, and a DIFFERENT style to the dioramas
 
-The 17 renders already in `design-brain/3D Images/` are commercial and industrial
-buildings — supermarket, automotive logistics, an industrial plant. Beautiful craft,
-but they suit a **POS/retail** product, not a personal-finance app, and most carry
-baked-in English signage.
+> [!IMPORTANT]
+> These are **not** dioramas. A diorama is a scene that needs 400px to read; a
+> category icon renders at **42px** in a settings tile and 22–30px in a picker
+> row. At that size a room full of furniture is a smudge. This set is **one
+> object, centred, on transparent**.
+>
+> The dioramas above stay as they are — they are page-level art (empty states,
+> onboarding heroes). Do not mix the two.
 
-What Bachat Book actually needs is one diorama **per spend category**, so the category
-picker, the budget cards and the reports legend all share a visual language. Same
-recipe, one line changed each time.
+The 26 main categories each carry an `art_path` in the database. The file is
+looked up by that path, so **the filename must match exactly**; anything missing
+falls back to a tinted Lucide glyph, which is a designed state rather than a
+hole, so a partial set ships fine.
 
-Swap the **scene** line into the B1 prompt and keep everything else identical — that
-is what holds the camera, materials and base consistent across the set:
+### The spec
 
-| Category | Scene line |
+| | |
 |---|---|
-| Kiryana | *(already have it — the clean storefront, no text)* |
-| Restaurants | a small dhaba with a tandoor, three wooden tables and stacked steel plates |
-| Petrol | a two-pump filling station with a flat canopy and an air hose |
-| Pharmacy | a small chemist counter with glass cabinets and neat medicine boxes |
-| Education | a single classroom with four desks, a blank green board and a globe |
-| Health | a clinic room with an examination bed, a folding screen and a wheeled stool |
-| Clothing | a boutique with hanging rails, folded fabric stacks and a fitting mirror |
-| Electronics | a repair counter with an open device, tool trays and small parts bins |
-| Transport | an open workshop bay with a car lift, a tool trolley and stacked tyres |
-| Personal care | a two-chair barber shop with mirrors and a wash basin |
-| Charity | *(use B8 — the alcove with the brass bowl)* |
-| Events | a decorated wedding-hall stage with a canopy, floral arch and seated rows |
-| Utilities | a meter room with a boxed electricity meter, a gas meter and conduit |
-| Household staff | a small utility room with a washing line, buckets and folded linen |
+| **Form** | ONE object (or one tight cluster of 2–3), centred, filling ~85% of the frame |
+| **Background** | **Transparent PNG with alpha.** Not white, not grey |
+| **Size** | 512×512, square |
+| **Light** | Bright even studio light, soft contact shadow directly beneath the object |
+| **Camera** | Slight 3/4 view, a little above eye level, mild perspective |
+| **Materials** | Matte realistic — ceramic, wood, fabric, brushed metal. **Never shiny plastic** |
+| **Colour** | Each object in its own natural colours, moderately saturated |
+| **Text** | None. Ever |
 
-**Reinforce the negatives on every one.** The existing set shows why: several renders
-carry legible signage, and one came back with the whole sign mirrored. Any baked-in
-English also blocks Urdu localisation later, since the text is part of the pixels.
+**Transparent is load-bearing, not a preference.** `CategoryArt` composites each
+icon onto a tone-tinted plate using `color-mix(… 14%, transparent)`, which is
+what lets the same file sit on cream, on `surface-subtle`, on the navy band and
+in dark mode. A baked-in light-grey square glows in dark mode and clashes on
+navy — that is exactly the bug that put eleven wrong institution logos on screen.
+
+### The prompt
+
+Paste this, replacing `<SUBJECT>`:
+
+> A single 3D rendered icon of **`<SUBJECT>`**, centred and filling most of the frame.
+> Soft matte realistic materials, natural moderately-saturated colours, bright even
+> studio lighting with a soft contact shadow directly beneath the object. Slight
+> three-quarter view from just above, mild perspective, 35mm.
+> **Transparent background with alpha, absolutely no background, no ground plane, no
+> text, no letters, no numbers, no logos, no signage, no currency symbols, no brand
+> names.** Highly detailed, sharp, clean edges, 512×512, 8K quality.
+
+### The 26 subjects
+
+Save to `web/public/categories/`. Filename is exact.
+
+**Expense — 16**, in the order they appear in the app:
+
+| # | Category | Urdu | File | `<SUBJECT>` |
+|---|---|---|---|---|
+| 1 | Food | کھانا | `food.png` | a steaming bowl of curry beside two stacked rotis |
+| 2 | Bills | بل | `bills.png` | an electricity meter with a small paper bill tucked under it |
+| 3 | Transport | آمد و رفت | `transport.png` | a small white hatchback car, three-quarter front view |
+| 4 | Shopping | خریداری | `shopping.png` | two paper shopping bags, one tipped slightly, with folded fabric showing |
+| 5 | Home | گھر | `home.png` | a small two-storey house with a flat roof and a boundary wall |
+| 6 | Health | صحت | `health.png` | a stethoscope coiled beside a small bottle of tablets |
+| 7 | Education | تعلیم | `education.png` | a graduation cap resting on two stacked books |
+| 8 | Family | اہلِ خانہ | `family.png` | three simple rounded figures of different heights standing together |
+| 9 | Personal | ذاتی نگہداشت | `personal.png` | a pair of scissors, a comb and a small soap bar grouped together |
+| 10 | Leisure | تفریح | `leisure.png` | a game controller resting against a small television |
+| 11 | Travel | سیر و سفر | `travel.png` | a rolling suitcase with a small aeroplane banking above it |
+| 12 | Events | تقریبات | `events.png` | a tiered decorated cake with a small floral garland |
+| 13 | Giving | خیرات و زکوٰۃ | `giving.png` | two open cupped hands holding a small brass bowl |
+| 14 | Finance | مالی امور | `finance.png` | a classical bank building with four columns |
+| 15 | Tax | ٹیکس | `tax.png` | a long paper receipt curling out of a small government-style stamp |
+| 16 | Other | متفرق | `other.png` | a plain rounded label tag with a small ring |
+
+**Income — 6:**
+
+| # | Category | Urdu | File | `<SUBJECT>` |
+|---|---|---|---|---|
+| 17 | Salary | تنخواہ | `salary.png` | a leather briefcase with a small fan of banknotes beside it |
+| 18 | Business | کاروبار | `business.png` | a small shop front with a striped awning and a closed shutter |
+| 19 | Freelance | فری لانس | `freelance.png` | an open laptop with a small globe beside it |
+| 20 | Rental | کرایہ | `rental.png` | a small apartment block with a key resting against it |
+| 21 | Investments | سرمایہ کاری | `investments.png` | three stacked gold coins with a small rising arrow behind them |
+| 22 | Other Income | دیگر آمدنی | `other-income.png` | an open envelope with folded banknotes emerging |
+
+**Transfer — 4:**
+
+| # | Category | Urdu | File | `<SUBJECT>` |
+|---|---|---|---|---|
+| 23 | Transfer | منتقلی | `transfer.png` | two curved arrows forming a circle between two small cards |
+| 24 | Cash Out | رقم نکلوانا | `cash-out.png` | an ATM machine dispensing a single banknote |
+| 25 | Cash In | رقم جمع | `cash-in.png` | a small bank counter window with a stack of notes on the ledge |
+| 26 | To Savings | بچت میں | `savings.png` | a ceramic piggy bank with one coin above its slot |
+
+**Reinforce the negatives on every one.** The diorama set shows why: several came
+back with legible signage and one with the sign mirrored. Baked-in English also
+blocks Urdu later, because the text is part of the pixels.
 
 ---
 
 ## After generating
 
 1. **Look at each one at full size before it goes in.** Text artefacts on signage or labels, shiny plastic instead of matte, or a camera angle inconsistent with the rest of the set all mean regenerate — do not build on a weak asset.
-2. Save originals to `Bachat Book/web/public/art/` as `b1-kiryana.png`, `b2-committee.png`, and so on.
+2. Save originals to `Bachat Book/web/public/art/` as `b1-kiryana.png`, `b2-committee.png`, and so on. **Category icons go to `web/public/categories/` instead**, under the exact filenames in the table above.
+3. **Check the category icons at 42px, not at 512.** That is the size they actually render at in the settings tile, and it is where an over-detailed object turns to mush. Anything unreadable small needs a simpler subject, not a sharper render.
+4. **Confirm the alpha channel survived.** A PNG saved with a flattened white background looks identical in a file browser and wrong on the navy band and in dark mode. Open one on a dark surface before generating the other 25.
 3. Gemini output usually arrives on **off-white with a slight vignette**, not pure white — it shows as a grey rectangle on the cream canvas. Either knock the background out once and save WebP, or render with the `.render-blend` class already in `globals.css` (`mix-blend-mode: multiply`).
 4. Convert to WebP at roughly 2× the rendered size. These are large PNGs; unconverted they will dominate page weight.

@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useLocale } from "next-intl";
 import { X, Trash2, Split, ArrowUpRight, ArrowDownRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -9,7 +8,7 @@ import { DatePicker } from "@/components/ui/date-picker";
 import { Select, RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
-import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { CategoryPicker } from "@/components/category-picker";
 import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { useSession } from "@/components/session-provider";
 import { LinkBadge } from "@/components/ui/row-actions";
@@ -18,7 +17,6 @@ import { deleteMovement, deleteTransfer } from "@/lib/ledger-actions";
 import {
   PAYMENT_METHOD_LABEL,
   toSignedPaisa,
-  groupCategories,
   todayISO,
 } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
@@ -43,9 +41,6 @@ export function TransactionDrawer({
 }: TransactionDrawerProps) {
   const supabase = createClient();
   const session = useSession();
-  // Catalogue order, this household's pruning, and the active language all
-  // come from one place so every picker in the app agrees with the others.
-  const locale = useLocale();
   const hiddenCategoryIds = useHiddenCategoryIds(session.household?.id);
 
   const { showToast } = useToast();
@@ -103,7 +98,11 @@ export function TransactionDrawer({
 
     async function loadData() {
       const [catRes, merRes, splitRes, legRes] = await Promise.all([
-        supabase.from("categories").select("*").order("name", { ascending: true }),
+        supabase
+          .from("categories")
+          .select("*")
+          .order("sort_order")
+          .order("name"),
         supabase.from("merchants").select("*").order("name", { ascending: true }),
         supabase.from("transaction_splits").select("*").eq("transaction_id", txId),
         legId
@@ -272,16 +271,6 @@ export function TransactionDrawer({
 
   // Category options grouped parent -> child with the category's own icon, rather
   // than a flat alphabetical list of 37 where children and parents interleave.
-  const categoryOptions = groupCategories(
-    categories,
-    transaction.type === "transfer" ? undefined : transaction.type,
-    { hiddenIds: hiddenCategoryIds, locale },
-  ).map(({ category, groupLabel }) => ({
-    value: category.id,
-    label: categoryLabel(category, locale),
-    group: groupLabel,
-    icon: <CategoryIcon icon={category.icon} size={15} />,
-  }));
 
   const splitCategoryOptions = categories.map((c) => ({
     value: c.id,
@@ -360,12 +349,14 @@ export function TransactionDrawer({
               />
             </div>
 
-            <RichSelect
-              label="Primary Category"
+            <CategoryPicker
+              label="Primary category"
               value={categoryId}
               onChange={setCategoryId}
-              options={categoryOptions}
-              placeholder="Choose a category"
+              categories={categories}
+              kind={transaction.type}
+              householdId={session.household?.id ?? ""}
+              hiddenIds={hiddenCategoryIds}
             />
 
             <RichSelect

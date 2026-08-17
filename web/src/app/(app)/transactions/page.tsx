@@ -160,7 +160,11 @@ function TransactionsPageInner() {
           .select("*, institutions(*)")
           .eq("household_id", householdId)
           .is("deleted_at", null),
-        supabase.from("categories").select("*").order("name", { ascending: true }),
+        supabase
+          .from("categories")
+          .select("*")
+          .order("sort_order")
+          .order("name"),
       ]);
 
       if (!active) return;

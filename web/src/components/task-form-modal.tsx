@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useLocale } from "next-intl";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -19,11 +18,11 @@ import { RichSelect } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { useToast } from "@/components/ui/toast";
-import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { CategoryPicker } from "@/components/category-picker";
 import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { accountSelectOptions } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
-import { groupCategories, todayISO } from "@/lib/ledger";
+import { todayISO } from "@/lib/ledger";
 import {
   MIN_GENERATION_LEAD,
   NOTIFY_LEAD,
@@ -76,9 +75,6 @@ export function TaskFormModal({
   onSuccess?: () => void;
 }) {
   const supabase = createClient();
-  // Catalogue order, this household's pruning, and the active language all
-  // come from one place so every picker in the app agrees with the others.
-  const locale = useLocale();
   const hiddenCategoryIds = useHiddenCategoryIds(householdId);
 
   const { showToast } = useToast();
@@ -175,21 +171,15 @@ export function TaskFormModal({
     [accounts, direction],
   );
 
-  const categoryOptions: SelectOption[] = React.useMemo(
-    () =>
-      groupCategories(categories, direction, {
-      hiddenIds: hiddenCategoryIds,
-      locale,
-    }).map(({ category, groupLabel }) => ({
-        value: category.id,
-        label: categoryLabel(category, locale),
-        group: groupLabel,
-        icon: <CategoryIcon icon={category.icon} size={15} />,
-      })),
-    [categories, direction, hiddenCategoryIds, locale],
-  );
-  const categoryValid = categoryOptions.some((o) => o.value === categoryId);
-  const effectiveCategoryId = categoryValid ? categoryId : "";
+  /*
+   * Switching the direction invalidates the chosen category — the kinds are
+   * disjoint sets in the DB. Derived during render rather than reset in an
+   * effect, which React Compiler rejects. CategoryPicker splits this single id
+   * back into its main/sub fields, so nothing here can disagree with it.
+   */
+  const chosenCategory = categories.find((c) => c.id === categoryId);
+  const effectiveCategoryId =
+    chosenCategory?.kind === direction ? categoryId : "";
 
   const minLead = MIN_GENERATION_LEAD[effectivePriority];
   const effectiveLead = generationLeadDays(
@@ -515,13 +505,13 @@ export function TaskFormModal({
                 hint="Defaults to cash. You can switch account at the moment you pay."
               />
 
-              <RichSelect
-                label="Category"
+              <CategoryPicker
                 value={effectiveCategoryId}
                 onChange={setCategoryId}
-                options={categoryOptions}
-                placeholder="Choose a category"
-                emptyMessage="No categories for this direction"
+                categories={categories}
+                kind={direction}
+                householdId={householdId}
+                hiddenIds={hiddenCategoryIds}
               />
             </div>
           )}

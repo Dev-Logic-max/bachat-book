@@ -1,20 +1,19 @@
 "use client";
 
 import * as React from "react";
-import { useLocale } from "next-intl";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
-import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { CategoryPicker } from "@/components/category-picker";
 import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { MerchantMark } from "@/components/merchant-mark";
 import { accountSelectOptions } from "@/components/account-options";
 import type { AccountWithInstitution } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
-import { BANKING_ACCOUNT_TYPES, groupCategories, todayISO } from "@/lib/ledger";
+import { BANKING_ACCOUNT_TYPES, todayISO } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 import type { SelectOption } from "@/components/ui/select";
 import type { Tables } from "@/lib/supabase/types";
@@ -58,9 +57,6 @@ export function AddTransactionModal({
 
   const { showToast } = useToast();
   const supabase = createClient();
-  // Catalogue order, this household's pruning, and the active language all
-  // come from one place so every picker in the app agrees with the others.
-  const locale = useLocale();
   const hiddenCategoryIds = useHiddenCategoryIds(householdId);
 
 
@@ -77,7 +73,11 @@ export function AddTransactionModal({
           .eq("is_archived", false)
           .is("deleted_at", null)
           .in("type", [...BANKING_ACCOUNT_TYPES]),
-        supabase.from("categories").select("*").order("name", { ascending: true }),
+        supabase
+          .from("categories")
+          .select("*")
+          .order("sort_order")
+          .order("name"),
         supabase.from("merchants").select("*").order("name", { ascending: true }),
       ]);
 
@@ -152,19 +152,6 @@ export function AddTransactionModal({
   const accountOptions = accountSelectOptions(accounts, { direction: type });
 
   // Parent-first with children grouped underneath. A flat alphabetical list of
-  // 37 puts "Electricity" between "Education" and "Entertainment" with nothing
-  // to say one is a bill and the others are not.
-  const categoryOptions: SelectOption[] = groupCategories(categories, type, {
-      hiddenIds: hiddenCategoryIds,
-      locale,
-    }).map(
-    ({ category, groupLabel }) => ({
-      value: category.id,
-      label: categoryLabel(category, locale),
-      group: groupLabel,
-      icon: <CategoryIcon icon={category.icon} size={15} />,
-    }),
-  );
 
   const merchantOptions: SelectOption[] = [
     { value: "none", label: "No merchant", description: "Type it in the note instead" },
@@ -272,15 +259,13 @@ export function AddTransactionModal({
         </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <RichSelect
-            label="Category"
+          <CategoryPicker
             value={categoryId}
             onChange={setCategoryId}
-            options={categoryOptions}
-            placeholder={
-              categoryOptions.length === 0 ? "Loading categories…" : "Choose a category"
-            }
-            emptyMessage="No categories for this type"
+            categories={categories}
+            kind={type}
+            householdId={householdId}
+            hiddenIds={hiddenCategoryIds}
           />
 
           <RichSelect

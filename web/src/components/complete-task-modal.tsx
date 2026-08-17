@@ -1,7 +1,6 @@
 "use client";
 
 import * as React from "react";
-import { useLocale } from "next-intl";
 import {
   ArrowRight,
   CheckCircle2,
@@ -14,12 +13,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { DatePicker } from "@/components/ui/date-picker";
-import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { CategoryPicker } from "@/components/category-picker";
 import { useHiddenCategoryIds } from "@/lib/use-hidden-categories";
 import { useSession } from "@/components/session-provider";
 import { accountSelectOptions } from "@/components/account-options";
 import type { AccountWithInstitution } from "@/components/account-options";
-import { groupCategories, todayISO } from "@/lib/ledger";
+import { todayISO } from "@/lib/ledger";
 import { REPEAT_LABEL, nextDueDate } from "@/lib/tasks";
 import { formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -63,7 +62,6 @@ export function CompleteTaskModal({
   const session = useSession();
   // Catalogue order, this household's pruning, and the active language all come
   // from one place so every picker in the app agrees with the others.
-  const locale = useLocale();
   const hiddenCategoryIds = useHiddenCategoryIds(session.household?.id);
 
   const [amount, setAmount] = React.useState("");
@@ -103,21 +101,15 @@ export function CompleteTaskModal({
     [accounts, direction],
   );
 
-  const categoryOptions: SelectOption[] = React.useMemo(
-    () =>
-      groupCategories(categories, direction, {
-      hiddenIds: hiddenCategoryIds,
-      locale,
-    }).map(({ category, groupLabel }) => ({
-        value: category.id,
-        label: categoryLabel(category, locale),
-        group: groupLabel,
-        icon: <CategoryIcon icon={category.icon} size={15} />,
-      })),
-    [categories, direction, hiddenCategoryIds, locale],
-  );
-  const categoryStillValid = categoryOptions.some((o) => o.value === categoryId);
-  const effectiveCategoryId = categoryStillValid ? categoryId : "";
+  /*
+   * Switching the direction invalidates the chosen category — the kinds are
+   * disjoint sets in the DB. Derived during render rather than reset in an
+   * effect, which React Compiler rejects. CategoryPicker splits this single id
+   * back into its main/sub fields, so nothing here can disagree with it.
+   */
+  const chosenCategory = categories.find((c) => c.id === categoryId);
+  const effectiveCategoryId =
+    chosenCategory?.kind === direction ? categoryId : "";
 
   if (!task) return null;
 
@@ -240,13 +232,13 @@ export function CompleteTaskModal({
               }
             />
 
-            <RichSelect
-              label="Category"
+            <CategoryPicker
               value={effectiveCategoryId}
               onChange={setCategoryId}
-              options={categoryOptions}
-              placeholder="Choose a category"
-              emptyMessage="No categories for this direction"
+              categories={categories}
+              kind={direction}
+              householdId={session.household?.id ?? ""}
+              hiddenIds={hiddenCategoryIds}
             />
 
             {/* The consequence, in one line, before the click. */}

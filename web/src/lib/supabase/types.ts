@@ -66,7 +66,11 @@ export type Database = {
           phone: string | null;
           avatar_url: string | null;
           locale: string;
+          /** Province/territory code from lib/pk-geo.ts — PB, SD, KP, BA, IS, GB, AJ. */
+          province: string | null;
           city: string | null;
+          /** Picked key; 'other' means `occupation` below carries the real answer. */
+          occupation_code: string | null;
           occupation: string | null;
           timezone: string;
           created_at: string;
@@ -80,7 +84,9 @@ export type Database = {
           phone?: string | null;
           avatar_url?: string | null;
           locale?: string;
+          province?: string | null;
           city?: string | null;
+          occupation_code?: string | null;
           occupation?: string | null;
           timezone?: string;
         };

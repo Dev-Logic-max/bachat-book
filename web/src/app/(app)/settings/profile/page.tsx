@@ -5,36 +5,80 @@ import { useSession } from "@/components/session-provider";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { AvatarUpload } from "@/components/avatar-upload";
+import { ProfileFields } from "@/components/profile-fields";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { formatName } from "@/lib/format";
+import { provinceForCity } from "@/lib/pk-geo";
+import {
+  hasErrors,
+  toE164,
+  validateProfile,
+  type ProfileDraft,
+  type ProfileErrors,
+} from "@/lib/profile-fields";
 
 export default function ProfileSettingsPage() {
   const session = useSession();
   const { showToast } = useToast();
   const supabase = createClient();
 
-  const [firstName, setFirstName] = React.useState(session.profile?.first_name || "");
-  const [lastName, setLastName] = React.useState(session.profile?.last_name || "");
-  const [phone, setPhone] = React.useState(session.profile?.phone || "");
-  const [city, setCity] = React.useState(session.profile?.city || "");
-  const [occupation, setOccupation] = React.useState(session.profile?.occupation || "");
+  const [draft, setDraft] = React.useState<ProfileDraft>(() => ({
+    firstName: session.profile?.first_name ?? "",
+    lastName: session.profile?.last_name ?? "",
+    phone: session.profile?.phone ?? "",
+    // Rows created before `province` existed carry only a city name, so the
+    // province is inferred rather than shown blank on a profile already filled.
+    province: session.profile?.province ?? provinceForCity(session.profile?.city) ?? "",
+    city: session.profile?.city ?? "",
+    occupationCode: session.profile?.occupation_code ?? "",
+    occupationOther:
+      session.profile?.occupation_code === "other"
+        ? (session.profile?.occupation ?? "")
+        : "",
+  }));
+
+  const [errors, setErrors] = React.useState<ProfileErrors>({});
   const [loading, setLoading] = React.useState(false);
 
-  const fullName = formatName(firstName, lastName);
+  const fullName = formatName(draft.firstName, draft.lastName);
+
+  const patch = (p: Partial<ProfileDraft>) => {
+    setDraft((d) => ({ ...d, ...p }));
+    setErrors((e) => {
+      const next = { ...e };
+      for (const k of Object.keys(p)) delete next[k as keyof ProfileErrors];
+      return next;
+    });
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const found = validateProfile(draft);
+    setErrors(found);
+    if (hasErrors(found)) {
+      showToast({
+        type: "error",
+        title: "Check the highlighted fields",
+        description: "A few details still need fixing.",
+      });
+      return;
+    }
+
     setLoading(true);
 
     const { error } = await supabase
       .from("profiles")
       .update({
-        first_name: firstName.trim() || null,
-        last_name: lastName.trim() || null,
-        phone: phone.trim() || null,
-        city: city.trim() || null,
-        occupation: occupation.trim() || null,
+        first_name: draft.firstName.trim(),
+        last_name: draft.lastName.trim() || null,
+        phone: draft.phone.trim() ? toE164(draft.phone) : null,
+        province: draft.province,
+        city: draft.city,
+        occupation_code: draft.occupationCode || null,
+        occupation:
+          draft.occupationCode === "other" ? draft.occupationOther.trim() : null,
       })
       .eq("id", session.user.id);
 
@@ -44,7 +88,6 @@ export default function ProfileSettingsPage() {
       showToast({ type: "error", title: "Could not update profile", description: error.message });
       return;
     }
-
     showToast({ type: "success", title: "Profile updated", description: "Your details have been saved." });
   };
 
@@ -63,52 +106,20 @@ export default function ProfileSettingsPage() {
       </div>
 
       <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label="First name"
-            value={firstName}
-            onChange={(e) => setFirstName(e.target.value)}
-            required
-          />
-          <Input
-            label="Last name"
-            value={lastName}
-            onChange={(e) => setLastName(e.target.value)}
-          />
-        </div>
+        <ProfileFields draft={draft} errors={errors} onChange={patch} />
 
+        {/* Email is managed by the auth provider, not here. */}
         <Input
           label="Email address"
           value={session.user.email}
           disabled
           className="bg-surface-subtle opacity-75"
-        />
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label="Phone Number"
-            placeholder="e.g. +92 300 1234567"
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-          />
-          <Input
-            label="City"
-            placeholder="e.g. Lahore"
-            value={city}
-            onChange={(e) => setCity(e.target.value)}
-          />
-        </div>
-
-        <Input
-          label="Occupation"
-          placeholder="e.g. Financial Consultant"
-          value={occupation}
-          onChange={(e) => setOccupation(e.target.value)}
+          hint="Change this from your sign-in provider."
         />
 
         <div className="flex justify-end pt-4">
           <Button type="submit" variant="primary" isLoading={loading}>
-            Save Changes
+            Save changes
           </Button>
         </div>
       </form>

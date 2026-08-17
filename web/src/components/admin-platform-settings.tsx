@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, Check, KeyRound, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, Check, Eye, KeyRound, Loader2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Toggle } from "@/components/ui/toggle";
@@ -97,6 +98,29 @@ export function AdminPlatformSettings({ emailKeyPresent }: { emailKeyPresent: bo
 
   return (
     <div className="space-y-4">
+      {/*
+        Opens the real onboarding screen with every write path switched off. A
+        mock-up of it would drift from the thing users actually meet, which is
+        the whole reason for looking.
+      */}
+      <div className="bg-surface border-border rounded-panel border p-5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="font-display text-base font-semibold">New user experience</h3>
+            <p className="text-muted text-xs">
+              See the onboarding screen exactly as someone signing up meets it.
+            </p>
+          </div>
+          <Link
+            href="/welcome?preview=1"
+            className="border-border bg-surface hover:bg-surface-subtle text-foreground-2 inline-flex items-center gap-1.5 rounded-control border px-3 py-1.5 text-[12px] font-medium transition-colors"
+          >
+            <Eye size={14} />
+            Preview onboarding
+          </Link>
+        </div>
+      </div>
+
       <div className="bg-surface border-border rounded-panel border p-5 shadow-xs">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>

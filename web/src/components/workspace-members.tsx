@@ -75,10 +75,19 @@ export function WorkspaceMembers({
     let active = true;
 
     async function load() {
+      /*
+        Two queries, not an embed.
+
+        `household_members.user_id` has a foreign key to `auth.users`, NOT to
+        `public.profiles` — so `select("…, profiles(*)")` gives PGRST200,
+        "no matches were found", and a 400 with no rows. The names line up
+        (profiles.id IS the auth user id) which makes the embed look like it
+        should work, and it never can.
+      */
       const [m, i] = await Promise.all([
         supabase
           .from("household_members")
-          .select("id, user_id, role, profiles(*)")
+          .select("id, user_id, role")
           .eq("household_id", householdId),
         supabase
           .from("household_invitations")
@@ -97,20 +106,28 @@ export function WorkspaceMembers({
           description: m.error.message,
         });
         setMembers([]);
-      } else {
-        setMembers(
-          (m.data ?? []).map((row) => {
-            const r = row as unknown as {
-              id: string;
-              user_id: string;
-              role: HouseholdRole;
-              profiles: Tables<"profiles"> | null;
-            };
-            return { id: r.id, user_id: r.user_id, role: r.role, profile: r.profiles };
-          }),
-        );
+        setInvites(i.data ?? []);
+        return;
       }
 
+      const rows = m.data ?? [];
+      const ids = rows.map((r) => r.user_id);
+
+      const { data: people } = ids.length
+        ? await supabase.from("profiles").select("*").in("id", ids)
+        : { data: [] as Tables<"profiles">[] };
+
+      if (!active) return;
+
+      const byId = new Map((people ?? []).map((p) => [p.id, p]));
+      setMembers(
+        rows.map((r) => ({
+          id: r.id,
+          user_id: r.user_id,
+          role: r.role as HouseholdRole,
+          profile: byId.get(r.user_id) ?? null,
+        })),
+      );
       setInvites(i.data ?? []);
     }
 

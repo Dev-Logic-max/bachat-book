@@ -70,6 +70,50 @@ export function daysUntil(iso: string | null | undefined): number | null {
   return Math.ceil((end - Date.now()) / 86_400_000);
 }
 
+/**
+ * The date this subscription actually runs out.
+ *
+ * A trial counts down to `trial_ends_at`, a paid period to `current_period_end`.
+ * Reading the wrong one shows a trialling user their (null) renewal date and
+ * tells them they have forever. Free sits on `active` with no end date, which
+ * correctly yields null — nothing to count down to.
+ */
+export function periodEndsAt(sub: {
+  status: string;
+  trial_ends_at: string | null;
+  current_period_end: string | null;
+} | null): string | null {
+  if (!sub) return null;
+  return sub.status === "trialing" ? sub.trial_ends_at : sub.current_period_end;
+}
+
+/**
+ * What to call the subscription on screen.
+ *
+ * The stored `status` alone is not enough: entitlement is evaluated against the
+ * clock in the database, so a row can still read `trialing` while the trial has
+ * already lapsed. Showing "Trialing" there would contradict the limits the user
+ * is actually getting.
+ */
+export function subscriptionLabel(
+  sub: {
+    status: string;
+    trial_ends_at: string | null;
+    current_period_end: string | null;
+  } | null,
+  planCode: string,
+): string {
+  if (!sub) return "Free";
+  const days = daysUntil(periodEndsAt(sub));
+  const lapsed = days !== null && days <= 0;
+
+  if (sub.status === "trialing") return lapsed ? "Trial ended" : "Trial";
+  if (sub.status === "active") return lapsed ? "Expired" : planCode === "pro" ? "Active" : "Free";
+  if (sub.status === "past_due") return "Payment due";
+  if (sub.status === "canceled") return "Cancelled";
+  return sub.status;
+}
+
 export type ExpiryTone = "expired" | "urgent" | "soon" | "fine";
 
 /** Drives the colour of the days-left chip; thresholds live here, not in JSX. */

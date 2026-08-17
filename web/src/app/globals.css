@@ -347,6 +347,31 @@
     }
   }
 
+  /* Popover entrance. Shorter and smaller-travel than `reveal`: a menu appears
+     under the control you just clicked, so it should read as instant rather
+     than as content arriving. */
+  @keyframes popover-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px) scale(0.98);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    @keyframes popover-in {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+  }
+
   /* Skeleton shimmer. A travelling highlight rather than a pulsing opacity —
      pulse reads as "broken", sweep reads as "loading". */
   .shimmer {

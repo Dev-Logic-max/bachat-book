@@ -45,6 +45,12 @@ export async function signUpAction(prevState: unknown, formData: FormData) {
     return { error: "Please fill in all required fields." };
   }
 
+  // Reset enforced a minimum and sign-up did not, so the weakest password the
+  // product accepted was the one it accepted first.
+  if (password.length < 8) {
+    return { error: "Password must be at least 8 characters." };
+  }
+
   const supabase = await createClient();
   const { error } = await supabase.auth.signUp({
     email,

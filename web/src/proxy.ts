@@ -51,10 +51,19 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/sign-up") ||
     pathname.startsWith("/forgot-password");
 
+  // The design lab renders unfinished screens off fixture data. It is a
+  // development surface and was reachable signed-out in production.
+  const isLabRoute = pathname.startsWith("/lab");
+  if (isLabRoute && process.env.NODE_ENV === "production") {
+    return new NextResponse(null, { status: 404 });
+  }
+
+  // `/api` stays public because Meta's webhook has no session to present. It
+  // authenticates itself by HMAC signature inside the route instead.
   const isPublicRoute =
     isAuthRoute ||
     pathname.startsWith("/auth/callback") ||
-    pathname.startsWith("/lab") ||
+    isLabRoute ||
     pathname.startsWith("/api");
 
   // Root redirect

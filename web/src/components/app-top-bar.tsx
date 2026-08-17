@@ -1,8 +1,8 @@
 "use client";
 
 import { Bell } from "lucide-react";
-import { useSession } from "@/components/session-provider";
 import { UserMenu } from "@/components/user-menu";
+import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 
 /**
  * The one row that is on every screen at every width.
@@ -12,24 +12,16 @@ import { UserMenu } from "@/components/user-menu";
  * different answer depending on the window. The account control now lives in a
  * fixed place.
  *
- * The left side carries the workspace name, which matters most on a phone —
- * that is exactly where the rail's workspace switcher is missing, and posting an
- * expense into the wrong household is not a mistake you notice quickly.
+ * The left side carries the workspace SWITCHER, not just its name. It used to
+ * be a read-only label here and an interactive control in the rail — which
+ * collapses on desktop and is absent below `lg`, so on a phone there was no way
+ * to change workspace at all, and posting an expense into the wrong household is
+ * not a mistake you notice quickly.
  */
 export function AppTopBar() {
-  const session = useSession();
-  const household = session?.household?.name ?? "Personal Finances";
-
   return (
     <div className="mb-4 flex items-center justify-between gap-3 lg:mb-2">
-      <div className="min-w-0">
-        <p className="text-faint text-[10px] font-semibold uppercase tracking-[0.16em]">
-          Workspace
-        </p>
-        <p className="text-foreground-2 truncate text-[12.5px] font-medium">
-          {household}
-        </p>
-      </div>
+      <WorkspaceSwitcher />
 
       <div className="flex shrink-0 items-center gap-2">
         {/*

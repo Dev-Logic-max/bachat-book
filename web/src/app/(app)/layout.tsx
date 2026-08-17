@@ -6,6 +6,7 @@ import { ToastProvider } from "@/components/ui/toast";
 import { AppRail } from "@/components/app-rail";
 import { AppTopBar } from "@/components/app-top-bar";
 import { BottomNav } from "@/components/bottom-nav";
+import { WorkspaceReadOnlyBanner } from "@/components/workspace-read-only-banner";
 
 export default async function AppLayout({
   children,
@@ -43,6 +44,12 @@ export default async function AppLayout({
               control and the active workspace.
             */}
             <AppTopBar />
+            {/*
+              Only renders when the active workspace is past the plan's
+              allowance. Above the page rather than inside it, because every
+              module's write controls are affected, not one screen's.
+            */}
+            <WorkspaceReadOnlyBanner />
             {children}
           </main>
         </div>

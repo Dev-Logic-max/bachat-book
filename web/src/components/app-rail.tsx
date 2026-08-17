@@ -29,7 +29,6 @@ import { cn } from "@/lib/utils";
 import { signOutAction } from "@/lib/supabase/actions";
 import { Avatar } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/theme";
-import { WorkspaceSwitcher } from "@/components/workspace-switcher";
 import { formatName } from "@/lib/format";
 import { useRailCollapsed } from "@/lib/rail-state";
 
@@ -100,7 +99,6 @@ export function AppRail({ session }: { session?: UserSession | null }) {
     ? formatName(session.profile.first_name, session.profile.last_name)
     : session?.user?.email?.split("@")[0] || "Your account";
 
-  const householdName = session?.household?.name || "Personal Finances";
   // Non-filer until the ATL says otherwise — the honest default in Pakistan.
   const isFiler = session?.preferences?.is_filer ?? false;
 
@@ -223,15 +221,12 @@ export function AppRail({ session }: { session?: UserSession | null }) {
           )}
         </div>
 
-        {!collapsed && (
-          <div className="mt-3">
-            <WorkspaceSwitcher
-              currentName={householdName}
-              currentId={session?.household?.id ?? null}
-              currentKind={session?.household?.kind ?? null}
-            />
-          </div>
-        )}
+        {/*
+          The workspace switcher used to sit here. It moved to the top bar,
+          which is the one row that renders at every width — this rail is hidden
+          below `lg`, so a control that only lives here does not exist on a
+          phone.
+        */}
       </div>
 
       {/* The only scrolling region. Scrollbar hidden, still scrollable. */}

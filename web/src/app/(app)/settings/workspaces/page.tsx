@@ -7,11 +7,12 @@ import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
-import { RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { WorkspaceMembers } from "@/components/workspace-members";
+import { WorkspacePresetPicker } from "@/components/workspace-preset-picker";
 import { createClient } from "@/lib/supabase/client";
 import { formatLimit, isUnlimited, type WorkspaceAccess } from "@/lib/plan";
+import { presetByKey, type WorkspacePreset } from "@/lib/modules";
 import { cn } from "@/lib/utils";
 
 import type { HouseholdKind } from "@/lib/supabase/types";
@@ -21,24 +22,6 @@ const KIND_ICON: Record<HouseholdKind, typeof User> = {
   family: Users,
   business: Building2,
 };
-
-const KIND_OPTIONS = [
-  {
-    value: "family",
-    label: "Family household",
-    description: "Shared money for a home — bills, groceries, school fees",
-  },
-  {
-    value: "personal",
-    label: "Personal finances",
-    description: "Just yours, kept separate from everyone else's",
-  },
-  {
-    value: "business",
-    label: "Business or freelance",
-    description: "Keeps trading money out of the household books",
-  },
-];
 
 export default function WorkspacesSettingsPage() {
   const session = useSession();
@@ -51,7 +34,9 @@ export default function WorkspacesSettingsPage() {
 
   const [createOpen, setCreateOpen] = React.useState(false);
   const [name, setName] = React.useState("");
-  const [kind, setKind] = React.useState<HouseholdKind>("family");
+  // The preset is what the user picks; `kind` is derived from it. Keeping the
+  // behavioural discriminator at three values is the whole point of having both.
+  const [preset, setPreset] = React.useState<WorkspacePreset>("family");
   const [submitting, setSubmitting] = React.useState(false);
 
   const defaultHouseholdId = session.preferences?.default_household_id;
@@ -110,7 +95,9 @@ export default function WorkspacesSettingsPage() {
       .from("households")
       .insert({
         name: name.trim(),
-        kind,
+        // Derived, never picked directly: seven presets map onto three kinds.
+        kind: presetByKey(preset).kind,
+        preset,
         owner_id: session.user.id,
         base_currency: "PKR",
       })
@@ -271,6 +258,7 @@ export default function WorkspacesSettingsPage() {
         }
       >
         <div className="space-y-4">
+          {/* Name first, then the type — the order you asked for. */}
           <Input
             label="Workspace name"
             placeholder="e.g. Khan Household"
@@ -280,12 +268,7 @@ export default function WorkspacesSettingsPage() {
             autoFocus
           />
 
-          <RichSelect
-            label="What is it for"
-            value={kind}
-            onChange={(v) => setKind(v as HouseholdKind)}
-            options={KIND_OPTIONS}
-          />
+          <WorkspacePresetPicker value={preset} onChange={setPreset} />
         </div>
       </Modal>
     </div>

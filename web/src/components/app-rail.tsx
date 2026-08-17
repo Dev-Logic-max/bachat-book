@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -30,6 +31,7 @@ import { signOutAction } from "@/lib/supabase/actions";
 import { Avatar } from "@/components/ui/avatar";
 import { ThemeToggle } from "@/components/theme";
 import { formatName } from "@/lib/format";
+import { MODULES, resolveModules, type WorkspacePreset } from "@/lib/modules";
 import { useRailCollapsed } from "@/lib/rail-state";
 
 import type { LucideIcon } from "lucide-react";
@@ -92,6 +94,29 @@ export function AppRail({ session }: { session?: UserSession | null }) {
     { icon: ShieldCheck, label: "Admin Console", href: "/admin" },
     { icon: Settings, label: "Settings", href: "/settings" },
   ];
+
+  /*
+    Hide what this workspace's preset does not include.
+
+    Matched by href against the registry in lib/modules.ts. Anything the
+    registry does not know about — the admin console, for one — is always
+    shown, so a module can never disappear just because it was left out of the
+    list. The vertical modules are not in the rail yet; they arrive with the
+    screens behind them.
+  */
+  const enabledHrefs = React.useMemo(() => {
+    const preset = (session?.household?.preset ?? "personal") as WorkspacePreset;
+    return new Set(resolveModules(preset).map((m) => m.href));
+  }, [session?.household?.preset]);
+
+  const forPreset = React.useCallback(
+    (items: RailItem[]) =>
+      items.filter(
+        (item) =>
+          !MODULES.some((m) => m.href === item.href) || enabledHrefs.has(item.href),
+      ),
+    [enabledHrefs],
+  );
 
   // Never invent an identity: fall back to the email local part, then a neutral
   // label. A hardcoded person's name here shipped into every empty session.
@@ -236,10 +261,10 @@ export function AppRail({ session }: { session?: UserSession | null }) {
           collapsed ? "gap-2 px-3" : "gap-5 px-4",
         )}
       >
-        {renderGroup("Daily", DAILY)}
-        {renderGroup("Planner", PLANNER)}
-        {renderGroup("Wealth", MONEY)}
-        {renderGroup("Insights & tools", TOOLS)}
+        {renderGroup("Daily", forPreset(DAILY))}
+        {renderGroup("Planner", forPreset(PLANNER))}
+        {renderGroup("Wealth", forPreset(MONEY))}
+        {renderGroup("Insights & tools", forPreset(TOOLS))}
         {renderGroup("System", CLOSING)}
       </nav>
 

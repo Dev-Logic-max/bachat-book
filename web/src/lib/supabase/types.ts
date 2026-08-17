@@ -103,7 +103,10 @@ export type Database = {
         Row: {
           id: string;
           name: string;
+          /** Behaviour. Three values, on purpose — every map keyed on it grows a branch. */
           kind: HouseholdKind;
+          /** Content. Seeds the module set; never used for access control. */
+          preset: string;
           owner_id: string;
           base_currency: string;
           city: string | null;
@@ -115,6 +118,7 @@ export type Database = {
           id?: string;
           name: string;
           kind?: HouseholdKind;
+          preset?: string;
           owner_id: string;
           base_currency?: string;
           city?: string | null;

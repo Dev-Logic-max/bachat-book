@@ -50,13 +50,22 @@ export function WorkspaceMembers({
   memberLimit,
   isActive,
   onChanged,
+  variant = "panel",
 }: {
   householdId: string;
   isOwner: boolean;
   memberLimit: number;
   isActive: boolean;
   onChanged: () => void;
+  /**
+   * `panel` is a card of its own. `inline` drops the chrome so this can sit
+   * INSIDE the workspace card it belongs to — three workspaces rendering a card
+   * plus a separate People panel each is six blocks for three things, and reads
+   * as six workspaces at a glance.
+   */
+  variant?: "panel" | "inline";
 }) {
+  const inline = variant === "inline";
   const session = useSession();
   const supabase = createClient();
   const { showToast } = useToast();
@@ -228,11 +237,26 @@ export function WorkspaceMembers({
   };
 
   return (
-    <div className="bg-surface border-border rounded-panel border p-5 shadow-xs">
+    <div
+      className={cn(
+        inline
+          ? "border-border border-t px-5 py-4"
+          : "bg-surface border-border rounded-panel border p-5 shadow-xs",
+      )}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="font-display text-base font-semibold">People</h3>
-          <p className="text-muted text-xs">
+          <h3
+            className={cn(
+              "font-display font-semibold",
+              inline
+                ? "text-faint text-[10px] uppercase tracking-[0.12em]"
+                : "text-base",
+            )}
+          >
+            People
+          </h3>
+          <p className={cn("text-muted", inline ? "mt-1 text-[11px]" : "text-xs")}>
             {used} of {formatLimit(memberLimit)} seats used
             {full && " · all taken"}
           </p>

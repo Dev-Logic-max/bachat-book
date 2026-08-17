@@ -153,9 +153,20 @@ export default function WorkspacesSettingsPage() {
         </Button>
       </div>
 
-      <div className="space-y-4">
+      {/*
+        ONE card per workspace, two to a row.
+
+        Each workspace used to render a card AND a separate People panel stacked
+        under it — so three workspaces made six blocks, and at a glance the list
+        read as six workspaces. People belongs to the workspace, so it now lives
+        inside its card behind a divider.
+      */}
+      <div className="grid gap-4 xl:grid-cols-2">
         {rows === null ? (
-          <div className="bg-surface border-border shimmer rounded-panel h-32 border" />
+          <>
+            <div className="bg-surface border-border shimmer rounded-panel h-64 border" />
+            <div className="bg-surface border-border shimmer rounded-panel h-64 border" />
+          </>
         ) : (
           rows.map((w) => {
             const isDefault = w.id === defaultHouseholdId;
@@ -163,13 +174,14 @@ export default function WorkspacesSettingsPage() {
             const Icon = KIND_ICON[w.kind] ?? Users;
 
             return (
-              <div key={w.id} className="space-y-3">
-                <div
-                  className={cn(
-                    "bg-surface border-border rounded-card border p-5 shadow-xs",
-                    isDefault && "ring-navy-900 dark:ring-brass ring-2",
-                  )}
-                >
+              <div
+                key={w.id}
+                className={cn(
+                  "bg-surface border-border rounded-panel shadow-xs flex flex-col overflow-hidden border",
+                  isDefault && "ring-navy-900 dark:ring-brass ring-2",
+                )}
+              >
+                <div className="p-5">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div className="flex min-w-0 items-center gap-2.5">
                       <span className="bg-brass-soft text-brass-strong flex size-9 shrink-0 items-center justify-center rounded-card">
@@ -216,24 +228,27 @@ export default function WorkspacesSettingsPage() {
                   )}
 
                   {!isDefault && (
-                    <div className="border-border mt-4 border-t pt-3">
-                      <button
-                        onClick={() => handleSwitchDefault(w.id)}
-                        className="text-brass-strong text-xs font-semibold hover:underline"
-                      >
-                        Switch to this workspace
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handleSwitchDefault(w.id)}
+                      className="text-brass-strong mt-3 text-xs font-semibold hover:underline"
+                    >
+                      Switch to this workspace
+                    </button>
                   )}
                 </div>
 
-                <WorkspaceMembers
-                  householdId={w.id}
-                  isOwner={isOwner}
-                  memberLimit={w.member_limit}
-                  isActive={w.is_active}
-                  onChanged={refresh}
-                />
+                {/* Pushed to the bottom so two cards in a row line their
+                    People sections up even when one has a read-only note. */}
+                <div className="mt-auto">
+                  <WorkspaceMembers
+                    householdId={w.id}
+                    isOwner={isOwner}
+                    memberLimit={w.member_limit}
+                    isActive={w.is_active}
+                    onChanged={refresh}
+                    variant="inline"
+                  />
+                </div>
               </div>
             );
           })

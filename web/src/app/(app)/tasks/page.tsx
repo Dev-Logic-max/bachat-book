@@ -1,18 +1,23 @@
 "use client";
 
 import * as React from "react";
+import { useLocale } from "next-intl";
 import {
   AlertTriangle,
+  ArrowUpRight,
   CheckCircle2,
   CheckSquare,
+  ChevronUp,
   Circle,
   Clock,
+  Flag,
   Kanban,
   ListChecks,
+  Minus,
   Plus,
+  Receipt,
   Repeat,
   Sparkles,
-  Wallet2,
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Reveal } from "@/components/reveal";
@@ -20,7 +25,9 @@ import { EmptyState } from "@/components/empty-state";
 import { PageActions } from "@/components/page-actions";
 import { TaskFormModal } from "@/components/task-form-modal";
 import { CompleteTaskModal } from "@/components/complete-task-modal";
+import { SubtaskPriceModal } from "@/components/subtask-price-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
+import { CategoryIcon, categoryLabel, toneColor } from "@/components/category-icon";
 import { RowActions } from "@/components/ui/row-actions";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
@@ -39,14 +46,19 @@ import {
   dueLabel,
   dueTone,
   isReadyToComplete,
+  orderedItems,
+  subtaskTotalPaisa,
 } from "@/lib/tasks";
 import { formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import type { AccountWithInstitution } from "@/components/account-options";
 import type { SettleInput } from "@/lib/task-actions";
-import type { DueTone, TaskWithChecklist } from "@/lib/tasks";
+import type { ChecklistItem, DueTone, TaskWithChecklist } from "@/lib/tasks";
 import type { TaskPriority, TaskStatus, Tables } from "@/lib/supabase/types";
+
+/** Just enough of the settled entry to link to it and say what it was. */
+type SettledRef = { id: string; date: string; amount_paisa: number };
 
 type ViewMode = "board" | "list";
 
@@ -82,7 +94,16 @@ export default function TasksPage() {
   const [editing, setEditing] = React.useState<TaskWithChecklist | null>(null);
   const [completing, setCompleting] = React.useState<TaskWithChecklist | null>(null);
   const [deleting, setDeleting] = React.useState<TaskWithChecklist | null>(null);
+  const [pricing, setPricing] = React.useState<{
+    item: ChecklistItem;
+    task: TaskWithChecklist;
+  } | null>(null);
   const [busy, setBusy] = React.useState(false);
+
+  /** The ledger entries completed tasks wrote, keyed by task id. */
+  const [settledRefs, setSettledRefs] = React.useState<Map<string, SettledRef>>(
+    () => new Map(),
+  );
 
   const reload = () => setRefreshKey((k) => k + 1);
 
@@ -113,6 +134,36 @@ export default function TasksPage() {
       const rows = (taskRes.data ?? []) as unknown as TaskWithChecklist[];
       setTasks(rows);
       setLoading(false);
+
+      /*
+       * Fetch the entries the completed tasks wrote, so a finished card can link
+       * to the money rather than merely claim it moved. The date is what makes
+       * the link land: Entries opens on a month, and a task completed in June is
+       * nowhere to be seen on the August page.
+       */
+      const settledIds = rows
+        .map((t) => t.settled_transaction_id)
+        .filter((id): id is string => Boolean(id));
+
+      if (settledIds.length > 0) {
+        const { data: txs } = await supabase
+          .from("transactions")
+          .select("id, date, amount_paisa")
+          .in("id", settledIds);
+        if (!active) return;
+
+        const byTx = new Map((txs ?? []).map((t) => [t.id, t as SettledRef]));
+        setSettledRefs(
+          new Map(
+            rows.flatMap((t) => {
+              const ref = t.settled_transaction_id
+                ? byTx.get(t.settled_transaction_id)
+                : undefined;
+              return ref ? [[t.id, ref] as const] : [];
+            }),
+          ),
+        );
+      }
 
       /*
        * Bring any repeating series up to date.
@@ -228,25 +279,62 @@ export default function TasksPage() {
     }
   };
 
-  const toggleItem = async (item: Tables<"task_checklist_items">) => {
-    // Optimistic: the column a card sits in is derived from these, so the card
-    // must move the instant the box is ticked.
+  /**
+   * Write one subtask's state, optimistically.
+   *
+   * Optimistic because the board COLUMN is derived from these — ticking the
+   * first box moves the card to In progress — and a card that jumps a beat after
+   * the click reads as a bug rather than as a consequence.
+   */
+  const writeItem = async (
+    item: ChecklistItem,
+    patch: { is_done: boolean; amount_paisa?: number | null },
+  ) => {
     setTasks((prev) =>
       prev.map((t) =>
         t.id === item.task_id
           ? {
               ...t,
               task_checklist_items: (t.task_checklist_items ?? []).map((i) =>
-                i.id === item.id ? { ...i, is_done: !i.is_done } : i,
+                i.id === item.id ? { ...i, ...patch } : i,
               ),
             }
           : t,
       ),
     );
-    await supabase
-      .from("task_checklist_items")
-      .update({ is_done: !item.is_done })
-      .eq("id", item.id);
+    await supabase.from("task_checklist_items").update(patch).eq("id", item.id);
+  };
+
+  /*
+   * Ticking an item on a PAID task asks what it cost first.
+   *
+   * The alternative is adding three receipts up on a phone at the counter, which
+   * is exactly the arithmetic the module exists to remove. Untickng never asks —
+   * that is a correction, and the price is kept so re-ticking remembers it.
+   */
+  const toggleItem = (item: ChecklistItem) => {
+    const task = tasks.find((t) => t.id === item.task_id);
+    if (!item.is_done && task?.is_paid) {
+      setPricing({ item, task });
+      return;
+    }
+    void writeItem(item, { is_done: !item.is_done });
+  };
+
+  const handlePriced = async (amountPaisa: number | null) => {
+    if (!pricing) return;
+    setBusy(true);
+    try {
+      await writeItem(pricing.item, {
+        is_done: true,
+        // A skipped price CLEARS any old one. Ticking without a figure means you
+        // are not counting this item, not that last month's still applies.
+        amount_paisa: amountPaisa,
+      });
+      setPricing(null);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleDelete = async (alsoEntry: boolean) => {
@@ -282,6 +370,8 @@ export default function TasksPage() {
     onToggleItem: toggleItem,
     onDelete: (t: TaskWithChecklist) => setDeleting(t),
     accounts,
+    categories,
+    settledRefs,
   };
 
   return (
@@ -447,6 +537,21 @@ export default function TasksPage() {
         busy={busy}
       />
 
+      <SubtaskPriceModal
+        isOpen={pricing !== null}
+        onClose={() => setPricing(null)}
+        onConfirm={handlePriced}
+        item={pricing?.item ?? null}
+        otherTotalPaisa={
+          pricing
+            ? (pricing.task.task_checklist_items ?? [])
+                .filter((i) => i.id !== pricing.item.id)
+                .reduce((sum, i) => sum + Number(i.amount_paisa ?? 0), 0)
+            : 0
+        }
+        busy={busy}
+      />
+
       {/*
         The cascade box defaults to UNCHECKED here, unlike a transfer leg.
         The money genuinely left the account; tidying a to-do list must not
@@ -487,9 +592,11 @@ export default function TasksPage() {
 type CardHandlers = {
   onOpen: (t: TaskWithChecklist) => void;
   onToggle: (t: TaskWithChecklist) => void;
-  onToggleItem: (i: Tables<"task_checklist_items">) => void;
+  onToggleItem: (i: ChecklistItem) => void;
   onDelete: (t: TaskWithChecklist) => void;
   accounts: AccountWithInstitution[];
+  categories: Tables<"categories">[];
+  settledRefs: Map<string, SettledRef>;
 };
 
 function Column({
@@ -535,6 +642,22 @@ function Column({
   );
 }
 
+/**
+ * One task, in three bands separated by hairlines.
+ *
+ *   title    what it is, plus how urgent and the two controls
+ *   tags     everything measurable about it, in one small-text row
+ *   detail   the subtasks, or — once it is finished — the entry it wrote
+ *
+ * The bands exist because the card carries far more than a to-do normally does
+ * (a due date, a priority, a category, an amount, a recurrence, a checklist and
+ * a ledger link) and a single flowing block of that is unreadable. Rules cost
+ * one pixel each and let every value shrink to 10–11px while staying scannable.
+ *
+ * Priority is a TAG, not a coloured dot. A dot is a legend you have to have
+ * memorised; the word is the same width once it is set small, and the flag glyph
+ * slides in on hover for anyone who prefers the shape.
+ */
 function TaskCard({
   task,
   variant,
@@ -543,23 +666,41 @@ function TaskCard({
   onToggleItem,
   onDelete,
   accounts,
+  categories,
+  settledRefs,
 }: { task: TaskWithChecklist; variant: "card" | "row" } & CardHandlers) {
+  const locale = useLocale();
   const status = deriveStatus(task);
   const isDone = status === "done";
   const { done, total } = checklistProgress(task);
   const ready = isReadyToComplete(task);
   const tone = dueTone(task.due_date, task.priority);
   const account = accounts.find((a) => a.id === task.account_id);
+  const category = categories.find((c) => c.id === task.category_id);
+  const settled = settledRefs.get(task.id);
+  const items = orderedItems(task);
+  const runningTotal = subtaskTotalPaisa(task);
+
+  // The figure the card shows: what the subtasks have come to so far, falling
+  // back to the estimate. On a completed task the estimate IS the actual.
+  const shownPaisa = isDone
+    ? task.amount_paisa
+    : (runningTotal ?? task.amount_paisa);
+
+  const showSubtasks = total > 0 && !isDone;
+  const showFooter = isDone && Boolean(settled);
 
   return (
     <div
       className={cn(
-        "group bg-surface border-border relative transition-colors",
-        variant === "card" && "rounded-card border p-3.5 shadow-xs hover:shadow-md",
-        variant === "row" && "hover:bg-surface-subtle/60 px-4 py-3",
-        isDone && "opacity-70",
+        "group bg-surface border-border relative transition-all",
+        variant === "card" &&
+          "rounded-card border p-3 shadow-xs hover:border-border-strong hover:shadow-md",
+        variant === "row" && "hover:bg-surface-subtle/60 px-4 py-2.5",
+        isDone && "opacity-75 hover:opacity-100",
       )}
     >
+      {/* ---- Band 1: what it is ------------------------------------- */}
       <div className="flex items-start gap-2.5">
         {/*
           Completing is an explicit act, never inferred. For a paid task it moves
@@ -570,13 +711,13 @@ function TaskCard({
           onClick={() => onToggle(task)}
           aria-label={isDone ? `Reopen ${task.title}` : `Complete ${task.title}`}
           title={isDone ? "Reopen this task" : "Complete this task"}
-          className="mt-0.5 shrink-0 transition-colors"
+          className="mt-px shrink-0 transition-colors"
         >
           {isDone ? (
-            <CheckCircle2 size={17} className="text-gain" />
+            <CheckCircle2 size={16} className="text-gain" />
           ) : (
             <Circle
-              size={17}
+              size={16}
               className={cn(
                 "text-border-strong hover:text-brass",
                 ready && "text-brass",
@@ -585,130 +726,221 @@ function TaskCard({
           )}
         </button>
 
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start justify-between gap-2">
-            <button
-              type="button"
-              onClick={() => onOpen(task)}
-              className="min-w-0 flex-1 text-left"
-            >
-              <span
-                className={cn(
-                  "block truncate text-[12.5px] font-medium",
-                  isDone && "text-muted line-through",
-                )}
-              >
-                {task.title}
-              </span>
-            </button>
-
-            <div className="flex shrink-0 items-center gap-1.5">
-              <PriorityDot priority={task.priority} />
-              <RowActions
-                onEdit={() => onOpen(task)}
-                onDelete={() => onDelete(task)}
-                editLabel="Edit task"
-                deleteLabel="Delete task"
-                reveal="hover"
-              />
-            </div>
-          </div>
-
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
-            <DueChip due={task.due_date} tone={tone} isDone={isDone} />
-
-            {task.is_paid && task.amount_paisa && (
-              <span
-                className={cn(
-                  "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-medium",
-                  task.direction === "income"
-                    ? "bg-gain-soft text-gain"
-                    : "bg-surface-subtle text-foreground-2",
-                )}
-              >
-                <Wallet2 size={10} />
-                <span className="tnum">{formatPKR(task.amount_paisa)}</span>
-                {account && <span className="text-faint">· {account.name}</span>}
-              </span>
+        <button
+          type="button"
+          onClick={() => onOpen(task)}
+          className="min-w-0 flex-1 text-left"
+        >
+          <span
+            className={cn(
+              "block truncate text-[12.5px] font-medium",
+              isDone && "text-muted line-through",
             )}
+          >
+            {task.title}
+          </span>
+        </button>
 
-            {task.repeat_rule !== "none" && (
-              <span className="text-faint inline-flex items-center gap-1">
-                <Repeat size={10} />
-                {REPEAT_LABEL[task.repeat_rule].replace("Every ", "")}
-              </span>
-            )}
-
-            {total > 0 && (
-              <span className="text-faint tnum inline-flex items-center gap-1">
-                <CheckSquare size={10} />
-                {done}/{total}
-              </span>
-            )}
-
-            {ready && (
-              <span className="bg-brass-soft text-brass-strong inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-semibold">
-                <Sparkles size={10} />
-                Ready to complete
-              </span>
-            )}
-          </div>
-
-          {/* Subtasks are tickable in place — the column follows them, so making
-              you open a drawer to move a card would be a wasted step. */}
-          {variant === "card" && total > 0 && !isDone && (
-            <ul className="mt-2.5 space-y-1">
-              {(task.task_checklist_items ?? [])
-                .slice()
-                .sort((a, b) => a.sort_order - b.sort_order)
-                .map((item) => (
-                  <li key={item.id}>
-                    <button
-                      type="button"
-                      onClick={() => onToggleItem(item)}
-                      className="hover:bg-surface-subtle flex w-full items-center gap-2 rounded-control px-1.5 py-1 text-left transition-colors"
-                    >
-                      <span
-                        className={cn(
-                          "flex size-3.5 shrink-0 items-center justify-center rounded border transition-colors",
-                          item.is_done
-                            ? "bg-gain border-gain text-white"
-                            : "border-border-strong",
-                        )}
-                      >
-                        {item.is_done && <CheckSquare size={9} strokeWidth={3} />}
-                      </span>
-                      <span
-                        className={cn(
-                          "min-w-0 truncate text-[11.5px]",
-                          item.is_done ? "text-faint line-through" : "text-foreground-2",
-                        )}
-                      >
-                        {item.title}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          )}
+        <div className="flex shrink-0 items-center gap-1">
+          <PriorityTag priority={task.priority} dimmed={isDone} />
+          <RowActions
+            onEdit={() => onOpen(task)}
+            onDelete={() => onDelete(task)}
+            editLabel="Edit task"
+            deleteLabel="Delete task"
+            reveal="hover"
+          />
         </div>
       </div>
+
+      {/* ---- Band 2: everything measurable -------------------------- */}
+      <div
+        className={cn(
+          "border-border/70 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10.5px]",
+          variant === "card" ? "ps-6.5" : "ps-6.5",
+        )}
+      >
+        <DueChip due={task.due_date} tone={tone} isDone={isDone} />
+
+        {category && (
+          <span
+            className="inline-flex max-w-40 items-center gap-1 rounded-full px-1.5 py-0.5 font-medium"
+            style={{
+              background: `color-mix(in oklab, ${toneColor(category.tone)} 12%, transparent)`,
+              color: toneColor(category.tone),
+            }}
+          >
+            <CategoryIcon icon={category.icon} size={9} />
+            <span dir="auto" className="copy truncate">
+              {categoryLabel(category, locale)}
+            </span>
+          </span>
+        )}
+
+        {task.is_paid && Boolean(shownPaisa) && (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-semibold",
+              task.direction === "income"
+                ? "bg-gain-soft text-gain"
+                : "bg-surface-subtle text-foreground-2",
+            )}
+            title={
+              runningTotal !== null && !isDone
+                ? "Totalled from the subtask prices so far"
+                : isDone
+                  ? "What was actually paid"
+                  : "Your estimate — you confirm the real figure on completion"
+            }
+          >
+            {task.direction === "income" ? (
+              <Plus size={9} strokeWidth={3} />
+            ) : (
+              <Minus size={9} strokeWidth={3} />
+            )}
+            <span className="tnum">{formatPKR(Number(shownPaisa))}</span>
+            {!isDone && runningTotal === null && (
+              <span className="opacity-60">est.</span>
+            )}
+          </span>
+        )}
+
+        {account && task.is_paid && (
+          <span className="text-faint truncate">{account.name}</span>
+        )}
+
+        {task.repeat_rule !== "none" && (
+          <span className="text-faint inline-flex items-center gap-1">
+            <Repeat size={9} />
+            {REPEAT_LABEL[task.repeat_rule].replace("Every ", "")}
+          </span>
+        )}
+
+        {total > 0 && (
+          <span className="text-faint tnum inline-flex items-center gap-1">
+            <CheckSquare size={9} />
+            {done}/{total}
+          </span>
+        )}
+
+        {ready && (
+          <span className="bg-brass-soft text-brass-strong inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 font-semibold">
+            <Sparkles size={9} />
+            Ready
+          </span>
+        )}
+      </div>
+
+      {/* ---- Band 3a: the checklist --------------------------------- */}
+      {/*
+        Tickable in place. The column a card sits in follows these, so making
+        someone open a drawer to move a card would be a wasted step — and on a
+        paid task each tick is where the price is captured.
+      */}
+      {showSubtasks && (
+        <ul className="border-border/70 ms-6.5 mt-2 space-y-px border-t pt-1.5">
+          {items.map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                onClick={() => onToggleItem(item)}
+                className="hover:bg-surface-subtle flex w-full items-center gap-2 rounded-control px-1.5 py-1 text-left transition-colors"
+              >
+                <span
+                  className={cn(
+                    "flex size-3.5 shrink-0 items-center justify-center rounded border transition-colors",
+                    item.is_done
+                      ? "bg-gain border-gain text-white"
+                      : "border-border-strong",
+                  )}
+                >
+                  {item.is_done && <CheckSquare size={9} strokeWidth={3} />}
+                </span>
+                <span
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-[11.5px]",
+                    item.is_done ? "text-faint line-through" : "text-foreground-2",
+                  )}
+                >
+                  {item.title}
+                </span>
+                {item.amount_paisa !== null && item.amount_paisa !== undefined && (
+                  <span className="tnum text-muted shrink-0 text-[10.5px]">
+                    {formatPKR(Number(item.amount_paisa))}
+                  </span>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {/* ---- Band 3b: the money it moved ---------------------------- */}
+      {/*
+        A completed paid task claims money left an account. This is the receipt:
+        the actual entry, its date and its amount, one click away. The link
+        carries the month because Entries opens on one — without it a task
+        completed in June lands on an August page that does not contain it.
+      */}
+      {showFooter && settled && (
+        <div className="border-border/70 ms-6.5 mt-2 border-t pt-2">
+          <a
+            href={`/entries?month=${settled.date.slice(0, 7)}&entry=${settled.id}`}
+            className="bg-surface-subtle hover:bg-brass-soft hover:text-brass-strong text-foreground-2 group/ref inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-[10.5px] font-medium transition-colors"
+          >
+            <Receipt size={10} className="shrink-0" />
+            <span className="tnum">
+              {formatPKR(Math.abs(Number(settled.amount_paisa)))}
+            </span>
+            <span className="ltr text-faint group-hover/ref:text-brass-strong">
+              {settled.date}
+            </span>
+            <ArrowUpRight size={10} className="shrink-0 opacity-60" />
+          </a>
+        </div>
+      )}
     </div>
   );
 }
 
-function PriorityDot({ priority }: { priority: TaskPriority }) {
+const PRIORITY_STYLE: Record<TaskPriority, string> = {
+  high: "bg-loss-soft text-loss",
+  medium: "bg-brass-soft text-brass-strong",
+  low: "bg-surface-subtle text-muted",
+};
+
+/**
+ * Priority as a word.
+ *
+ * The glyph is collapsed to zero width and expands on hover, so the resting card
+ * shows only the label — three of these stacked in a column with permanent icons
+ * turned the right edge into a stripe of noise.
+ */
+function PriorityTag({
+  priority,
+  dimmed,
+}: {
+  priority: TaskPriority;
+  dimmed: boolean;
+}) {
   return (
     <span
       title={`${priority} priority`}
-      aria-label={`${priority} priority`}
       className={cn(
-        "block size-2 shrink-0 rounded-full",
-        priority === "high" && "bg-loss",
-        priority === "medium" && "bg-brass",
-        priority === "low" && "bg-border-strong",
+        "inline-flex shrink-0 items-center rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold capitalize",
+        PRIORITY_STYLE[priority],
+        dimmed && "opacity-60",
       )}
-    />
+    >
+      <span className="w-0 overflow-hidden transition-all duration-150 group-hover:me-1 group-hover:w-2.5">
+        {priority === "high" ? (
+          <ChevronUp size={10} strokeWidth={2.5} />
+        ) : (
+          <Flag size={10} strokeWidth={2.5} />
+        )}
+      </span>
+      {priority}
+    </span>
   );
 }
 
@@ -732,7 +964,7 @@ function DueChip({
         !isDone && tone === "later" && "text-faint",
       )}
     >
-      <Clock size={10} />
+      <Clock size={9} />
       <span className="ltr">{isDone ? due : dueLabel(due)}</span>
     </span>
   );

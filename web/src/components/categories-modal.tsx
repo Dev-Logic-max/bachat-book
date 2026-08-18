@@ -5,18 +5,20 @@ import { useLocale } from "next-intl";
 import {
   ArrowDownRight,
   ArrowUpRight,
-  Eye,
-  EyeOff,
   Lock,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
   Search,
   Tags,
+  Trash2,
 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CategoryFormModal } from "@/components/category-form-modal";
+import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import {
   CategoryArt,
   CategoryIcon,
@@ -77,6 +79,11 @@ export function CategoriesModal({
   const [formOpen, setFormOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<CategoryDraft | null>(null);
   const [formParentId, setFormParentId] = React.useState<string | null>(null);
+  const [deleting, setDeleting] = React.useState<Category | null>(null);
+  const [deleteUse, setDeleteUse] = React.useState<{
+    transactions: number;
+    budgets: number;
+  } | null>(null);
 
   // Clear the search each time it opens rather than reopening onto someone
   // else's half-typed filter.
@@ -164,6 +171,61 @@ export function CategoriesModal({
       return;
     }
 
+    onChanged?.();
+  };
+
+  /*
+   * Count what a delete would take with it BEFORE offering the button.
+   *
+   * `budgets.category_id` and `rules.category_id` are ON DELETE CASCADE, so
+   * removing a category silently removes every budget pointing at it.
+   * `transactions.category_id` is ON DELETE SET NULL, which is gentler but still
+   * strips the label off past entries. Neither is something to discover after
+   * the fact, so both are named in the dialog.
+   */
+  const requestDelete = async (category: Category) => {
+    setDeleting(category);
+    setDeleteUse(null);
+
+    const [tx, bud] = await Promise.all([
+      supabase
+        .from("transactions")
+        .select("id", { count: "exact", head: true })
+        .eq("category_id", category.id),
+      supabase
+        .from("budgets")
+        .select("id", { count: "exact", head: true })
+        .eq("category_id", category.id),
+    ]);
+
+    setDeleteUse({ transactions: tx.count ?? 0, budgets: bud.count ?? 0 });
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    const { error } = await supabase
+      .from("categories")
+      .delete()
+      .eq("id", deleting.id);
+
+    if (error) {
+      showToast({
+        type: "error",
+        title: "Could not delete",
+        description: error.message,
+      });
+      return;
+    }
+
+    showToast({
+      type: "success",
+      title: `“${deleting.name}” deleted`,
+      description:
+        deleteUse && deleteUse.transactions > 0
+          ? `${deleteUse.transactions} past ${deleteUse.transactions === 1 ? "entry" : "entries"} kept their amount and lost the label.`
+          : undefined,
+    });
+    setDeleting(null);
     onChanged?.();
   };
 
@@ -301,52 +363,74 @@ export function CategoriesModal({
                               </span>
                             )}
 
-                            {isOwn ? (
-                              <button
-                                type="button"
-                                disabled={readOnly}
-                                onClick={() => {
-                                  setEditing({
-                                    id: child.id,
-                                    name: child.name,
-                                    name_ur: child.name_ur,
-                                    icon: child.icon,
-                                    parent_id: child.parent_id,
-                                    kind: child.kind,
-                                  });
-                                  setFormParentId(null);
-                                  setFormOpen(true);
-                                }}
-                                aria-label={`Edit ${child.name}`}
-                                title={`Edit ${child.name}`}
-                                className="text-muted hover:bg-surface-3 hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-                              >
-                                <Pencil size={12} />
-                              </button>
-                            ) : (
-                              <button
-                                type="button"
+                            {/*
+                              Three separate actions, each in its own colour.
+                              An eye used to carry the on/off state, which reads
+                              as "show me this" rather than "this exists" — and
+                              it was the ONLY control on the row, so a
+                              household's own subcategory could be created and
+                              then never removed.
+
+                              They differ in how far they go, so they must not
+                              look alike: amber edits, grey switches off and is
+                              reversible, red deletes and is not.
+                            */}
+                            <span className="flex shrink-0 items-center gap-0.5">
+                              {isOwn && (
+                                <IconAction
+                                  disabled={readOnly}
+                                  onClick={() => {
+                                    setEditing({
+                                      id: child.id,
+                                      name: child.name,
+                                      name_ur: child.name_ur,
+                                      icon: child.icon,
+                                      parent_id: child.parent_id,
+                                      kind: child.kind,
+                                    });
+                                    setFormParentId(null);
+                                    setFormOpen(true);
+                                  }}
+                                  label={`Edit ${child.name}`}
+                                  tone="brass"
+                                >
+                                  <Pencil size={13} strokeWidth={1.75} />
+                                </IconAction>
+                              )}
+
+                              <IconAction
                                 disabled={readOnly}
                                 onClick={() => toggleHidden(child)}
-                                aria-label={
+                                label={
                                   isHidden
-                                    ? `Switch ${child.name} back on`
-                                    : `Switch ${child.name} off`
+                                    ? `Turn ${child.name} back on`
+                                    : `Turn ${child.name} off`
                                 }
                                 title={
                                   isHidden
-                                    ? "Switch back on"
-                                    : "Switch off — it leaves your pickers, past entries keep it"
+                                    ? "Off — turn it back on to see it in pickers"
+                                    : "On — turn it off to drop it from your pickers. Past entries keep it."
                                 }
-                                className="text-muted hover:bg-surface-3 hover:text-foreground flex size-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+                                tone={isHidden ? "muted" : "gain"}
                               >
                                 {isHidden ? (
-                                  <Eye size={12} />
+                                  <PowerOff size={13} strokeWidth={1.75} />
                                 ) : (
-                                  <EyeOff size={12} />
+                                  <Power size={13} strokeWidth={1.75} />
                                 )}
-                              </button>
-                            )}
+                              </IconAction>
+
+                              {isOwn && (
+                                <IconAction
+                                  disabled={readOnly}
+                                  onClick={() => void requestDelete(child)}
+                                  label={`Delete ${child.name}`}
+                                  tone="loss"
+                                >
+                                  <Trash2 size={13} strokeWidth={1.75} />
+                                </IconAction>
+                              )}
+                            </span>
                           </li>
                         );
                       })}
@@ -357,11 +441,23 @@ export function CategoriesModal({
             </ul>
           )}
 
-          <p className="text-faint text-[11px] italic leading-snug">
-            Main categories are set by Bachat Book so reports and tax summaries
-            mean the same thing for everyone. Everything under them is yours —
-            add your own, or switch off the ones you never use.
-          </p>
+          <div className="text-faint space-y-1.5 text-[11px] leading-snug">
+            <p className="italic">
+              Main categories are set by Bachat Book so reports and tax summaries
+              mean the same thing for everyone. Everything under them is yours.
+            </p>
+            <p className="flex flex-wrap items-center gap-x-3 gap-y-1 not-italic">
+              <span className="inline-flex items-center gap-1">
+                <Power size={11} className="text-gain" /> on
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <PowerOff size={11} /> off — hidden from pickers, past entries keep it
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Trash2 size={11} className="text-loss" /> gone for good
+              </span>
+            </p>
+          </div>
         </div>
       </Modal>
 
@@ -382,7 +478,82 @@ export function CategoriesModal({
         defaultParentId={formParentId}
         onSuccess={onChanged}
       />
+
+      {/*
+        No cascade choice. `budgets` and `rules` are ON DELETE CASCADE in the
+        database — there is no "keep them" branch to offer — and transactions are
+        SET NULL, which happens either way. The dialog's job here is to say so.
+      */}
+      <ConfirmDeleteModal
+        isOpen={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={confirmDelete}
+        title="Delete this subcategory?"
+        recordLabel={deleting ? categoryLabel(deleting, locale) : ""}
+        recordMeta="Your own subcategory — deleting it cannot be undone."
+        confirmLabel="Delete subcategory"
+        defaultCascade={false}
+        cascadeLabel=""
+        linkedRefs={
+          deleteUse
+            ? [
+                ...(deleteUse.transactions > 0
+                  ? [
+                      {
+                        kind: "Past entries",
+                        label: `${deleteUse.transactions} keep their amount and fall back to the main category`,
+                      },
+                    ]
+                  : []),
+                ...(deleteUse.budgets > 0
+                  ? [
+                      {
+                        kind: "Budgets",
+                        label: `${deleteUse.budgets} set against it will be removed`,
+                      },
+                    ]
+                  : []),
+              ]
+            : []
+        }
+      />
     </>
+  );
+}
+
+/** A small coloured action. Same 28px hit area as `RowActions` everywhere else. */
+function IconAction({
+  onClick,
+  label,
+  title,
+  tone,
+  disabled,
+  children,
+}: {
+  onClick: () => void;
+  label: string;
+  title?: string;
+  tone: "brass" | "gain" | "muted" | "loss";
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      aria-label={label}
+      title={title ?? label}
+      className={cn(
+        "flex size-7 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        tone === "brass" && "text-brass-strong hover:bg-brass-soft",
+        tone === "gain" && "text-gain hover:bg-gain-soft",
+        tone === "muted" && "text-muted hover:bg-surface-3 hover:text-foreground",
+        tone === "loss" && "text-loss/80 hover:text-loss hover:bg-loss-soft",
+      )}
+    >
+      {children}
+    </button>
   );
 }
 

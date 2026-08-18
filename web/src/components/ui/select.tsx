@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Check } from "lucide-react";
+import { ChevronDown, Check, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export interface SelectOption {
@@ -11,6 +11,16 @@ export interface SelectOption {
   avatarUrl?: string | null;
   icon?: React.ReactNode;
   description?: string;
+  /**
+   * The SAME fact in another form, shown right-aligned on the same row rather
+   * than on a second line: the Urdu name beside the English one.
+   *
+   * `description` sets a second line and doubles the row height. For 94
+   * subcategories that turned a picker into a scroll, and the second line was
+   * carrying one short word. Omitted when it is missing — a household's own
+   * "Chai Dhaba" has no Urdu name, and an empty second column reads as a gap.
+   */
+  secondaryLabel?: string;
   /** Optional group heading — used to render categories parent → child. */
   group?: string;
   /**
@@ -89,6 +99,21 @@ export interface RichSelectProps {
   trailing?: React.ReactNode;
   /** Extra classes for the trigger, e.g. to widen a filter row control. */
   className?: string;
+  /**
+   * A filter box pinned above the options.
+   *
+   * Typeahead alone only jumps to what a label STARTS with, which is the wrong
+   * shape for this catalogue — "Kiryana" is under Food, and someone looking for
+   * it types the word, not the letter F. Matches label, secondary label and
+   * description, so the Urdu name finds the English row and back again.
+   */
+  searchable?: boolean;
+  searchPlaceholder?: string;
+  /**
+   * Single-line rows, tighter padding. For long lists whose options are a name
+   * and nothing else.
+   */
+  dense?: boolean;
 }
 
 /**
@@ -116,10 +141,14 @@ export function RichSelect({
   hint,
   trailing,
   className,
+  searchable = false,
+  searchPlaceholder = "Search…",
+  dense = false,
 }: RichSelectProps) {
   const [isOpen, setIsOpen] = React.useState(false);
   const [activeIndex, setActiveIndex] = React.useState(-1);
   const [rect, setRect] = React.useState<DOMRect | null>(null);
+  const [query, setQuery] = React.useState("");
 
   const triggerRef = React.useRef<HTMLButtonElement>(null);
   const listRef = React.useRef<HTMLDivElement>(null);
@@ -128,10 +157,26 @@ export function RichSelect({
   const baseId = React.useId();
   const listboxId = `${baseId}-listbox`;
 
+  /*
+   * The filter matches every string on the option, not just the label. Someone
+   * scanning an Urdu picker types the Urdu word; someone who set "Kiryana" up in
+   * English types that. Both have to land on the same row.
+   */
+  const visible = React.useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!searchable || !q) return options;
+    return options.filter((o) =>
+      [o.label, o.secondaryLabel, o.description]
+        .filter(Boolean)
+        .some((s) => s!.toLowerCase().includes(q)),
+    );
+  }, [options, query, searchable]);
+
   const selectable = React.useMemo(
-    () => options.filter((o) => !o.disabled),
-    [options],
+    () => visible.filter((o) => !o.disabled),
+    [visible],
   );
+  // Looked up in the FULL list — a filtered-out selection is still the selection.
   const selectedOption = options.find((opt) => opt.value === value);
 
   const measure = React.useCallback(() => {
@@ -142,7 +187,10 @@ export function RichSelect({
     if (disabled) return;
     measure();
     setPendingRefocus(false);
-    const i = selectable.findIndex((o) => o.value === value);
+    // Never reopen onto the last filter — the list you saw last time is not the
+    // list you are looking for now.
+    setQuery("");
+    const i = options.filter((o) => !o.disabled).findIndex((o) => o.value === value);
     setActiveIndex(i >= 0 ? i : 0);
     setIsOpen(true);
   };
@@ -176,6 +224,7 @@ export function RichSelect({
     setPendingRefocus(true);
     setIsOpen(false);
     setActiveIndex(-1);
+    setQuery("");
   };
 
   // Reposition on scroll/resize while open. `true` captures scrolls on ancestor
@@ -276,8 +325,10 @@ export function RichSelect({
         return;
     }
 
-    // Typeahead: printable single characters accumulate for 700ms.
-    if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    // Typeahead: printable single characters accumulate for 700ms. Skipped when
+    // there is a search box — the same keystrokes belong to it, and typeahead
+    // only ever matched the START of a label anyway.
+    if (!searchable && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const now = e.timeStamp;
       const t = typeahead.current;
       t.query = now - t.at > 700 ? e.key : t.query + e.key;
@@ -295,7 +346,7 @@ export function RichSelect({
     { kind: "heading"; label: string } | { kind: "option"; opt: SelectOption }
   > = [];
   let lastGroup: string | undefined;
-  for (const opt of options) {
+  for (const opt of visible) {
     if (opt.group && opt.group !== lastGroup) {
       rendered.push({ kind: "heading", label: opt.group });
       lastGroup = opt.group;
@@ -360,6 +411,14 @@ export function RichSelect({
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-1.5">
+          {selectedOption?.secondaryLabel && (
+            <span
+              dir="auto"
+              className="copy text-faint hidden max-w-28 truncate text-[11.5px] font-normal sm:inline"
+            >
+              {selectedOption.secondaryLabel}
+            </span>
+          )}
           {trailing}
           <ChevronDown
             size={16}
@@ -404,10 +463,44 @@ export function RichSelect({
               // option is always reachable on a short mobile screen.
               maxHeight: Math.max(160, window.innerHeight - rect.bottom - 24),
             }}
-            className="scroll-hidden border-border bg-surface z-60 overflow-y-auto rounded-panel border p-1 shadow-xl"
+            className="border-border bg-surface z-60 flex flex-col overflow-hidden rounded-panel border shadow-xl"
           >
-            {options.length === 0 ? (
-              <p className="text-muted px-3 py-3 text-[11.5px]">{emptyMessage}</p>
+            {/*
+              Pinned, not scrolled with the options — a filter box that leaves
+              the viewport as you scroll is a filter box you cannot correct.
+            */}
+            {searchable && (
+              <div className="border-border bg-surface sticky top-0 shrink-0 border-b p-1.5">
+                <div className="relative">
+                  <Search
+                    size={13}
+                    className="text-muted pointer-events-none absolute inset-s-2.5 top-1/2 -translate-y-1/2"
+                  />
+                  <input
+                    autoFocus
+                    value={query}
+                    onChange={(e) => {
+                      setQuery(e.target.value);
+                      // Filtering changes what index 0 means; leaving the old
+                      // one would highlight a row nobody searched for.
+                      setActiveIndex(0);
+                    }}
+                    onKeyDown={onKeyDown}
+                    placeholder={searchPlaceholder}
+                    aria-label={searchPlaceholder}
+                    className="border-border bg-surface-subtle text-foreground placeholder:text-faint h-8 w-full rounded-control border ps-7 pe-2 text-[12px] outline-none focus:border-brass/50"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="scroll-hidden min-h-0 flex-1 overflow-y-auto p-1">
+            {visible.length === 0 ? (
+              <p className="text-muted px-3 py-3 text-[11.5px]">
+                {options.length === 0
+                  ? emptyMessage
+                  : `Nothing matches “${query.trim()}”.`}
+              </p>
             ) : (
               rendered.map((row, i) => {
                 if (row.kind === "heading") {
@@ -442,7 +535,8 @@ export function RichSelect({
                     onClick={() => commit(opt)}
                     onMouseEnter={() => idx >= 0 && setActiveIndex(idx)}
                     className={cn(
-                      "flex w-full items-center justify-between gap-3 rounded-control px-3 py-2 text-left text-xs transition-colors",
+                      "flex w-full items-center justify-between gap-2.5 rounded-control text-left text-xs transition-colors",
+                      dense ? "px-2.5 py-1.5" : "px-3 py-2",
                       // Colour and the check mark carry selection. `font-bold`
                       // used to be applied here, which reflowed the row width.
                       isActive && "bg-surface-subtle",
@@ -451,7 +545,12 @@ export function RichSelect({
                       opt.group && "ps-6",
                     )}
                   >
-                    <span className="flex min-w-0 items-center gap-2.5">
+                    <span
+                      className={cn(
+                        "flex min-w-0 flex-1 items-center",
+                        dense ? "gap-2" : "gap-2.5",
+                      )}
+                    >
                       {opt.avatarUrl && (
                         <img
                           src={opt.avatarUrl}
@@ -469,7 +568,7 @@ export function RichSelect({
                           {opt.icon}
                         </span>
                       )}
-                      <span className="min-w-0">
+                      <span className="min-w-0 flex-1">
                         <span className="block truncate">{opt.label}</span>
                         {opt.description && (
                           <span className="text-muted block truncate text-[10px] font-normal">
@@ -477,6 +576,20 @@ export function RichSelect({
                           </span>
                         )}
                       </span>
+                      {/*
+                        The other language, on the same line. `dir="auto"` and
+                        `.copy` because this is Urdu prose, not a number — the
+                        script has to be allowed to run right-to-left inside its
+                        own box while the row itself never mirrors.
+                      */}
+                      {opt.secondaryLabel && (
+                        <span
+                          dir="auto"
+                          className="copy text-faint max-w-[42%] shrink-0 truncate text-[11px] font-normal"
+                        >
+                          {opt.secondaryLabel}
+                        </span>
+                      )}
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {opt.meta}
@@ -488,6 +601,7 @@ export function RichSelect({
                 );
               })
             )}
+            </div>
           </div>,
           document.body,
         )}

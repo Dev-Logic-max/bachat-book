@@ -6,11 +6,11 @@ import {
   ArrowDownRight,
   ArrowLeftRight,
   ArrowUpRight,
-  Eye,
-  EyeOff,
   Lock,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
   Search,
   Trash2,
 } from "lucide-react";
@@ -514,35 +514,50 @@ function ParentCard({
                 on touch, where there is no hover to reveal them with.
               */}
               <span className="flex shrink-0 items-center gap-0.5 opacity-100 transition-opacity lg:opacity-0 lg:group-hover/row:opacity-100 lg:group-focus-within/row:opacity-100">
-                {isOwn ? (
-                  <>
-                    <IconButton
-                      label={`Edit ${child.name}`}
-                      onClick={() => onEdit(child)}
-                      disabled={readOnly}
-                    >
-                      <Pencil size={12} />
-                    </IconButton>
-                    <IconButton
-                      label={`Delete ${child.name}`}
-                      onClick={() => onDelete(child)}
-                      disabled={readOnly}
-                      tone="loss"
-                    >
-                      <Trash2 size={12} />
-                    </IconButton>
-                  </>
-                ) : (
+                {isOwn && (
                   <IconButton
-                    label={
-                      isHidden
-                        ? `Switch ${child.name} back on`
-                        : `Switch ${child.name} off`
-                    }
-                    onClick={() => onToggleHidden(child)}
+                    label={`Edit ${child.name}`}
+                    onClick={() => onEdit(child)}
                     disabled={readOnly}
+                    tone="brass"
                   >
-                    {isHidden ? <Eye size={12} /> : <EyeOff size={12} />}
+                    <Pencil size={12} />
+                  </IconButton>
+                )}
+
+                {/*
+                  On/off applies to EVERY subcategory, not only the seeded ones.
+                  A household that invented "Chai Dhaba" for one month wants the
+                  same switch as it has on "Kiryana", and an eye was the wrong
+                  glyph for it either way — it read as "show me this", when the
+                  question is whether the row is in play at all.
+                */}
+                <IconButton
+                  label={
+                    isHidden
+                      ? `Turn ${child.name} back on`
+                      : `Turn ${child.name} off`
+                  }
+                  title={
+                    isHidden
+                      ? "Off — turn it back on to see it in pickers"
+                      : "On — turn it off to drop it from your pickers. Past entries keep it."
+                  }
+                  onClick={() => onToggleHidden(child)}
+                  disabled={readOnly}
+                  tone={isHidden ? undefined : "gain"}
+                >
+                  {isHidden ? <PowerOff size={12} /> : <Power size={12} />}
+                </IconButton>
+
+                {isOwn && (
+                  <IconButton
+                    label={`Delete ${child.name}`}
+                    onClick={() => onDelete(child)}
+                    disabled={readOnly}
+                    tone="loss"
+                  >
+                    <Trash2 size={12} />
                   </IconButton>
                 )}
               </span>
@@ -589,13 +604,16 @@ function IconButton({
   label,
   onClick,
   disabled,
+  title,
   tone,
   children,
 }: {
   label: string;
   onClick: () => void;
   disabled?: boolean;
-  tone?: "loss";
+  title?: string;
+  /** Each action reads its own consequence: amber edits, green is on, red ends it. */
+  tone?: "loss" | "brass" | "gain";
   children: React.ReactNode;
 }) {
   return (
@@ -604,12 +622,13 @@ function IconButton({
       onClick={onClick}
       disabled={disabled}
       aria-label={label}
-      title={label}
+      title={title ?? label}
       className={cn(
         "flex size-6 shrink-0 items-center justify-center rounded-full transition-colors disabled:cursor-not-allowed disabled:opacity-40",
-        tone === "loss"
-          ? "text-muted hover:bg-loss-soft hover:text-loss"
-          : "text-muted hover:bg-surface-3 hover:text-foreground",
+        tone === "loss" && "text-loss/80 hover:bg-loss-soft hover:text-loss",
+        tone === "brass" && "text-brass-strong hover:bg-brass-soft",
+        tone === "gain" && "text-gain hover:bg-gain-soft",
+        !tone && "text-muted hover:bg-surface-3 hover:text-foreground",
       )}
     >
       {children}

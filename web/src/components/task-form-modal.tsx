@@ -5,6 +5,7 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   Bell,
+  CheckCircle2,
   GripVertical,
   ListChecks,
   Plus,
@@ -80,10 +81,30 @@ export function TaskFormModal({
   const { showToast } = useToast();
   const isEdit = Boolean(task);
 
+  /*
+   * A COMPLETED task is a different form.
+   *
+   * Its money has already moved and its subtasks are already ticked, so the due
+   * date, the priority, the recurrence and the "this moves money" switch are all
+   * decisions that can no longer take effect — offering them again reads as if
+   * changing one would do something. What is still worth correcting is what the
+   * ledger row says: the name, the note, the figure and the label. Those write
+   * through to the entry, because the database keeps the two in step.
+   */
+  const isSettled = Boolean(task && (task.is_done || task.status === "done"));
+
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [dueDate, setDueDate] = React.useState(todayISO());
-  const [priority, setPriority] = React.useState<TaskPriority>("medium");
+  /*
+   * LOW by default.
+   *
+   * Priority here only decides how many days early the reminder fires, and a new
+   * task is not urgent until someone says so. Defaulting to medium put every
+   * chore on a two-day warning ladder and made the setting mean nothing, because
+   * everything sat at the same rung.
+   */
+  const [priority, setPriority] = React.useState<TaskPriority>("low");
   const [repeatRule, setRepeatRule] = React.useState<TaskRepeatRule>("none");
   const [leadDays, setLeadDays] = React.useState("");
   const [isPaid, setIsPaid] = React.useState(false);
@@ -109,7 +130,7 @@ export function TaskFormModal({
       setTitle(task?.title ?? "");
       setDescription(task?.description ?? "");
       setDueDate(task?.due_date ?? todayISO());
-      setPriority(task?.priority ?? "medium");
+      setPriority(task?.priority ?? "low");
       setRepeatRule(task?.repeat_rule ?? "none");
       setLeadDays(task?.repeat_lead_days ? String(task.repeat_lead_days) : "");
       setIsPaid(task?.is_paid ?? false);
@@ -204,32 +225,53 @@ export function TaskFormModal({
       return;
     }
     const paisa = Math.round((parseFloat(amount) || 0) * 100);
-    if (isPaid && paisa <= 0) {
+    const needsAmount = isSettled ? Boolean(task?.is_paid) : isPaid;
+    if (needsAmount && paisa <= 0) {
       showToast({
         type: "error",
-        title: "A paid task needs an amount",
-        description: "Without one, completing it could not write an entry.",
+        title: "This task needs an amount",
+        description: isSettled
+          ? "Its ledger entry cannot be worth nothing."
+          : "Without one, completing it could not write an entry.",
       });
       return;
     }
 
     setLoading(true);
     try {
-      const payload = {
-        title: title.trim(),
-        description: description.trim() || null,
-        due_date: dueDate,
-        priority: effectivePriority,
-        repeat_rule: repeatRule,
-        repeat_lead_days: leadDays ? Number(leadDays) : null,
-        is_paid: isPaid,
-        // Cleared together with is_paid: a stale amount on an unpaid task would
-        // reappear as an estimate the day someone ticks "this costs money".
-        amount_paisa: isPaid ? paisa : null,
-        direction: isPaid ? direction : null,
-        account_id: isPaid ? effectiveAccountId || null : null,
-        category_id: isPaid ? effectiveCategoryId || null : null,
-      };
+      /*
+       * A completed task writes back only what the ledger row can still follow.
+       * Re-sending due_date, priority or repeat_rule from a form that never
+       * showed them would quietly reset them to this component's defaults.
+       */
+      const payload = isSettled
+        ? {
+            title: title.trim(),
+            description: description.trim() || null,
+            ...(task?.is_paid
+              ? {
+                  amount_paisa: paisa,
+                  account_id: effectiveAccountId || null,
+                  category_id: effectiveCategoryId || null,
+                }
+              : {}),
+          }
+        : {
+            title: title.trim(),
+            description: description.trim() || null,
+            due_date: dueDate,
+            priority: effectivePriority,
+            repeat_rule: repeatRule,
+            repeat_lead_days: leadDays ? Number(leadDays) : null,
+            is_paid: isPaid,
+            // Cleared together with is_paid: a stale amount on an unpaid task
+            // would reappear as an estimate the day someone ticks "this costs
+            // money".
+            amount_paisa: isPaid ? paisa : null,
+            direction: isPaid ? direction : null,
+            account_id: isPaid ? effectiveAccountId || null : null,
+            category_id: isPaid ? effectiveCategoryId || null : null,
+          };
 
       let taskId = task?.id ?? "";
 
@@ -246,14 +288,21 @@ export function TaskFormModal({
         taskId = data.id;
       }
 
-      await saveChecklist(taskId);
+      // The subtask editor is not shown for a completed task, so `items` holds a
+      // stale copy of the list. Writing it back would delete nothing and update
+      // nothing, but there is no reason to send the statements.
+      if (!isSettled) await saveChecklist(taskId);
 
       showToast({
         type: "success",
         title: isEdit ? "Task updated" : "Task created",
-        description: isPaid
-          ? "Completing it will write an entry you can adjust first."
-          : undefined,
+        description: isSettled
+          ? task?.settled_transaction_id
+            ? "Its ledger entry was updated to match."
+            : undefined
+          : isPaid
+            ? "Completing it will write an entry you can adjust first."
+            : undefined,
       });
       onClose();
       onSuccess?.();
@@ -302,11 +351,17 @@ export function TaskFormModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEdit ? "Edit task" : "New task"}
+      title={isSettled ? "Edit completed task" : isEdit ? "Edit task" : "New task"}
       subtitle={
-        isPaid ? "Completing this will record a payment" : "A to-do or a reminder"
+        isSettled
+          ? task?.settled_transaction_id
+            ? "Changes here update its ledger entry too"
+            : "Already completed"
+          : isPaid
+            ? "Completing this will record a payment"
+            : "A to-do or a reminder"
       }
-      icon={<ListChecks size={16} />}
+      icon={isSettled ? <CheckCircle2 size={16} /> : <ListChecks size={16} />}
       onSubmit={handleSubmit}
       footer={
         <>
@@ -319,6 +374,27 @@ export function TaskFormModal({
         </>
       }
     >
+      {isSettled ? (
+        <SettledFields
+          task={task!}
+          title={title}
+          setTitle={setTitle}
+          description={description}
+          setDescription={setDescription}
+          amount={amount}
+          setAmount={setAmount}
+          accountId={effectiveAccountId}
+          setAccountId={setAccountId}
+          accountOptions={accountOptions}
+          accountsLoaded={accounts.length > 0}
+          categoryId={effectiveCategoryId}
+          setCategoryId={setCategoryId}
+          categories={categories}
+          direction={direction}
+          householdId={householdId}
+          hiddenCategoryIds={hiddenCategoryIds}
+        />
+      ) : (
       <div className="space-y-4">
         <Input
           label="Task"
@@ -518,21 +594,31 @@ export function TaskFormModal({
         </section>
 
         {/* ---- Repeat --------------------------------------------------- */}
+        {/*
+          One row, not a panel. A one-off task is the common case and the whole
+          section used to be a bordered box with a heading, a select, a number
+          field and two paragraphs of explanation sitting under every task anyone
+          created. The explanation only says something once a rule is picked.
+        */}
         <section className="border-border overflow-hidden rounded-card border">
-          <header className="bg-surface-subtle border-border flex items-center gap-2 border-b px-3.5 py-2.5">
+          <div className="bg-surface-subtle flex items-center gap-2.5 px-3.5 py-2">
             <Repeat size={13} className="text-brass-strong shrink-0" />
-            <span className="text-foreground-2 text-[12px] font-medium">Repeat</span>
-          </header>
+            <span className="text-foreground-2 shrink-0 text-[12px] font-medium">
+              Repeat
+            </span>
+            <div className="ms-auto min-w-0 max-w-52 flex-1">
+              <RichSelect
+                value={repeatRule}
+                onChange={(v) => setRepeatRule(v as TaskRepeatRule)}
+                options={REPEAT_OPTIONS}
+                className="h-8 text-[12px]"
+              />
+            </div>
+          </div>
 
-          <div className="space-y-3 p-3.5">
-            <RichSelect
-              value={repeatRule}
-              onChange={(v) => setRepeatRule(v as TaskRepeatRule)}
-              options={REPEAT_OPTIONS}
-            />
-
-            {repeatRule !== "none" && (
-              <>
+          {repeatRule !== "none" && (
+            <div className="border-border space-y-2.5 border-t p-3.5">
+              {period !== 1 && (
                 <Input
                   label="Create the next one this many days early"
                   type="number"
@@ -542,58 +628,158 @@ export function TaskFormModal({
                   value={leadDays}
                   onChange={(e) => setLeadDays(e.target.value)}
                   className="tnum"
-                  disabled={period === 1}
                 />
+              )}
 
-                <div className="border-border flex items-start gap-2.5 rounded-control border p-2.5">
-                  <Bell size={13} className="text-brass-strong mt-0.5 shrink-0" />
-                  <p className="text-faint text-[11px] italic leading-snug">
-                    {period === 1 ? (
-                      <>
-                        A daily task appears on the day it is due — there is no
-                        room to create it early without stacking up copies of the
-                        same day&apos;s work.
-                      </>
-                    ) : (
-                      <>
-                        The next one appears{" "}
-                        <span className="text-foreground-2 not-italic">
-                          {effectiveLead} day{effectiveLead === 1 ? "" : "s"}
-                        </span>{" "}
-                        before it is due{" "}
-                        {nextDue && (
-                          <>
-                            (so around{" "}
-                            <span className="ltr text-foreground-2 not-italic">
-                              {nextDue}
-                            </span>
-                            )
-                          </>
-                        )}
-                        , always at least one clear day before its first reminder.
-                        {leadDays && Number(leadDays) !== effectiveLead && (
-                          <>
-                            {" "}
-                            Your {leadDays} was adjusted to fit inside one{" "}
-                            {repeatRule} cycle.
-                          </>
-                        )}
-                      </>
-                    )}
-                  </p>
-                </div>
-
-                <p className="text-faint text-[11px] italic leading-snug">
-                  Whether this one is completed or not does not change when the
-                  next appears — an unpaid bill still owes its money, so it stays
-                  on the board marked overdue.
-                </p>
-              </>
-            )}
-          </div>
+              <p className="text-faint flex items-start gap-2 text-[11px] italic leading-snug">
+                <Bell size={12} className="text-brass-strong mt-0.5 shrink-0" />
+                <span>
+                  {period === 1 ? (
+                    <>
+                      A daily task appears on the day it is due — creating it
+                      early would only stack up copies of the same day&apos;s work.
+                    </>
+                  ) : (
+                    <>
+                      The next one appears{" "}
+                      <span className="text-foreground-2 not-italic">
+                        {effectiveLead} day{effectiveLead === 1 ? "" : "s"}
+                      </span>{" "}
+                      early
+                      {nextDue && (
+                        <>
+                          , around{" "}
+                          <span className="ltr text-foreground-2 not-italic">
+                            {nextDue}
+                          </span>
+                        </>
+                      )}
+                      . Completing this one does not bring it forward — an unpaid
+                      bill still owes its money.
+                      {leadDays && Number(leadDays) !== effectiveLead && (
+                        <> Your {leadDays} was trimmed to fit one {repeatRule} cycle.</>
+                      )}
+                    </>
+                  )}
+                </span>
+              </p>
+            </div>
+          )}
         </section>
       </div>
+      )}
     </Modal>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/**
+ * The completed-task form: only what a settled ledger row can still follow.
+ *
+ * `sync_task_to_transaction` fires on title, amount, direction, account and
+ * category, so each of these writes through to the entry. Anything else on the
+ * task — due date, priority, recurrence — cannot reach it, and showing a control
+ * whose only effect is on a record nobody will look at again is worse than not
+ * showing it.
+ */
+function SettledFields({
+  task,
+  title,
+  setTitle,
+  description,
+  setDescription,
+  amount,
+  setAmount,
+  accountId,
+  setAccountId,
+  accountOptions,
+  accountsLoaded,
+  categoryId,
+  setCategoryId,
+  categories,
+  direction,
+  householdId,
+  hiddenCategoryIds,
+}: {
+  task: TaskWithChecklist;
+  title: string;
+  setTitle: (v: string) => void;
+  description: string;
+  setDescription: (v: string) => void;
+  amount: string;
+  setAmount: (v: string) => void;
+  accountId: string;
+  setAccountId: (v: string) => void;
+  accountOptions: SelectOption[];
+  accountsLoaded: boolean;
+  categoryId: string;
+  setCategoryId: (v: string) => void;
+  categories: Tables<"categories">[];
+  direction: MovementDirection;
+  householdId: string;
+  hiddenCategoryIds: ReadonlySet<string>;
+}) {
+  return (
+    <div className="space-y-4">
+      <Input
+        label="Task"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        required
+        autoFocus
+        hint={
+          task.settled_transaction_id
+            ? "This is also what the ledger entry is called."
+            : undefined
+        }
+      />
+
+      <Input
+        label="Notes (optional)"
+        value={description}
+        onChange={(e) => setDescription(e.target.value)}
+      />
+
+      {task.is_paid && (
+        <>
+          <Input
+            label={direction === "income" ? "Amount received (PKR)" : "Amount paid (PKR)"}
+            type="number"
+            step="any"
+            min="0"
+            inputMode="decimal"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="tnum"
+            required
+          />
+
+          <RichSelect
+            label={direction === "income" ? "Received into" : "Paid from"}
+            value={accountId}
+            onChange={setAccountId}
+            options={accountOptions}
+            placeholder={accountsLoaded ? "Choose an account" : "Loading…"}
+            emptyMessage="Add an account first"
+          />
+
+          <CategoryPicker
+            value={categoryId}
+            onChange={setCategoryId}
+            categories={categories}
+            kind={direction}
+            householdId={householdId}
+            hiddenIds={hiddenCategoryIds}
+          />
+
+          <p className="text-faint text-[11px] italic leading-snug">
+            Correcting the amount here moves the balance by the difference — the
+            entry is the same row your account was settled from, not a copy of it.
+          </p>
+        </>
+      )}
+    </div>
   );
 }
 

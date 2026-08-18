@@ -580,6 +580,10 @@ export type Database = {
           title: string;
           is_done: boolean;
           sort_order: number;
+          /* UNSIGNED reference price, set as the subtask is ticked. Direction,
+             account and category all live on the PARENT — there is one ledger
+             row per task, and a subtask price never reaches it by itself. */
+          amount_paisa: number | null;
           created_at: string;
         };
         Insert: {
@@ -588,6 +592,7 @@ export type Database = {
           title: string;
           is_done?: boolean;
           sort_order?: number;
+          amount_paisa?: number | null;
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["task_checklist_items"]["Insert"]>;

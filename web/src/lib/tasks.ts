@@ -56,6 +56,32 @@ export function checklistProgress(task: TaskWithChecklist): {
   return { done: items.filter((i) => i.is_done).length, total: items.length };
 }
 
+/** Subtasks in display order. Sorting lives here so no screen invents its own. */
+export function orderedItems(task: TaskWithChecklist): ChecklistItem[] {
+  return (task.task_checklist_items ?? [])
+    .slice()
+    .sort((a, b) => a.sort_order - b.sort_order);
+}
+
+/**
+ * What the subtasks add up to — the figure the completion dialog opens on.
+ *
+ * A grocery run is one payment made of prices nobody knows in advance. Each one
+ * is entered as its item is ticked, so by the time the task itself is completed
+ * the total is already there instead of being added up at the counter.
+ *
+ * Returns null when NOTHING carries a price, which is the difference between
+ * "these came to zero" and "no one priced anything" — the first should seed the
+ * amount field, the second must leave the saved estimate alone.
+ */
+export function subtaskTotalPaisa(task: TaskWithChecklist): number | null {
+  const priced = (task.task_checklist_items ?? []).filter(
+    (i) => i.amount_paisa !== null && i.amount_paisa !== undefined,
+  );
+  if (priced.length === 0) return null;
+  return priced.reduce((sum, i) => sum + Number(i.amount_paisa ?? 0), 0);
+}
+
 /* ------------------------------------------------------------------------- *
  * Due dates and reminders
  * ------------------------------------------------------------------------- */

@@ -105,26 +105,33 @@ export function CategoryPicker({
 
   const main = byId.get(mainId) ?? null;
 
+  /*
+   * The other language sits on the RIGHT of the same row, never on a second
+   * line. As a `description` it doubled every row's height for one short word,
+   * which turned a 94-item subcategory list into a scroll — and left a visible
+   * hole on the household's own rows, which have no Urdu name at all.
+   */
+  const otherLanguage = (c: Category) =>
+    (locale === "ur" ? c.name : c.name_ur) ?? undefined;
+
   const mainOptions: SelectOption[] = mains.map((c) => ({
     value: c.id,
     label: categoryLabel(c, locale),
-    // The other language's name, so the pair is legible whichever is active.
-    description: locale === "ur" ? c.name : (c.name_ur ?? undefined),
-    icon: <CategoryArt category={c} size={24} rounded="rounded-md" />,
+    secondaryLabel: otherLanguage(c),
+    icon: <CategoryArt category={c} size={22} rounded="rounded-md" />,
   }));
 
   const subOptions: SelectOption[] = [
     {
       value: "",
       label: main ? `Just ${categoryLabel(main, locale)}` : "No subcategory",
-      description: "Leave it at the main category",
-      icon: main ? <CategoryIcon icon={main.icon} size={15} /> : undefined,
+      icon: main ? <CategoryIcon icon={main.icon} size={14} /> : undefined,
     },
     ...subs.map((c) => ({
       value: c.id,
       label: categoryLabel(c, locale),
-      description: locale === "ur" ? c.name : (c.name_ur ?? undefined),
-      icon: <CategoryIcon icon={c.icon} size={15} />,
+      secondaryLabel: otherLanguage(c),
+      icon: <CategoryIcon icon={c.icon} size={14} />,
       meta: c.household_id ? (
         <span className="bg-brass-soft text-brass-strong rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold">
           Yours
@@ -165,6 +172,9 @@ export function CategoryPicker({
             }
             emptyMessage="No categories for this type"
             error={error}
+            searchable={mains.length > 8}
+            searchPlaceholder="Search main categories…"
+            dense
           />
         </div>
 
@@ -180,6 +190,9 @@ export function CategoryPicker({
             onChange={(id) => onChange(id || mainId)}
             options={subOptions}
             placeholder={`Just ${main ? categoryLabel(main, locale) : "the main category"}`}
+            searchable={subs.length > 6}
+            searchPlaceholder="Search subcategories…"
+            dense
             hint={
               subs.length === 0
                 ? "Nothing under this yet — add one from Manage."

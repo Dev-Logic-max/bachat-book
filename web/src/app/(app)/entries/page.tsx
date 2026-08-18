@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { useSearchParams } from "next/navigation";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -54,9 +55,22 @@ type TypeFilter = "all" | "income" | "expense";
  * and opening balances (the position an account started at, not money earned).
  * Both live on Transactions.
  */
+/*
+ * useSearchParams must sit under a Suspense boundary, otherwise Next bails out
+ * of prerendering the whole route. Same wrapper as Transactions.
+ */
 export default function EntriesPage() {
+  return (
+    <React.Suspense fallback={<div className="shimmer h-64 rounded-panel" />}>
+      <EntriesPageInner />
+    </React.Suspense>
+  );
+}
+
+function EntriesPageInner() {
   const session = useSession();
   const supabase = createClient();
+  const searchParams = useSearchParams();
   const { showToast } = useToast();
 
   const householdId = session.household?.id || "";
@@ -75,7 +89,18 @@ export default function EntriesPage() {
    * and stopped meaning anything. A month is the unit a household actually
    * thinks in, and it is one click to widen.
    */
-  const [month, setMonth] = React.useState(() => todayISO().slice(0, 7));
+  /*
+   * `?month=` and `?entry=` let another screen link at ONE row.
+   *
+   * A completed task claims money left an account; the receipt chip on its card
+   * points here. Without the month the link lands on a page that does not
+   * contain the entry — this list opens on the current month, and the task might
+   * have been completed in June.
+   */
+  const [month, setMonth] = React.useState(
+    () => searchParams.get("month") ?? todayISO().slice(0, 7),
+  );
+  const highlightId = searchParams.get("entry");
   const [typeFilter, setTypeFilter] = React.useState<TypeFilter>("all");
   const [categoryFilter, setCategoryFilter] = React.useState("all");
   const [accountFilter, setAccountFilter] = React.useState("all");
@@ -570,6 +595,17 @@ export default function EntriesPage() {
                   key={entry.id}
                   entry={entry}
                   account={accountRefById.get(entry.account_id) ?? null}
+                  /*
+                    The row someone was sent here to look at. A ring rather than
+                    a scroll-and-flash: the list is filtered to one month, so the
+                    row is usually on screen already, and a permanent marker is
+                    still there after the animation anyone missed.
+                  */
+                  className={
+                    highlightId === entry.id
+                      ? "ring-brass/60 bg-brass-soft/40 ring-2 ring-inset"
+                      : undefined
+                  }
                   onEdit={() => {
                     const amt = Number(entry.amount_paisa);
                     setEditing({

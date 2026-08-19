@@ -109,8 +109,29 @@ Bachat Book\app\android\app\build\outputs\apk\release\app-release.apk
 That single file is the whole app. Send it on WhatsApp, put it on Drive, copy it
 to a USB stick — anyone with it can install it.
 
-**The first build takes 10–25 minutes** because Gradle compiles the native code
-and the NDK toolchain from scratch. Later builds take 2–4 minutes.
+**The first build took 52 minutes** on this machine and produced a 99 MB APK.
+That is slow because the build is deliberately serial — see the AAPT2 row in the
+troubleshooting table. Later builds take 3–5 minutes, since the native
+compilation is cached.
+
+Two things must be in `android/local.properties` before the first build, and
+`prebuild` creates neither of them:
+
+```properties
+sdk.dir=F:/Android/Sdk
+cmake.dir=F:/Android/Sdk/cmake/3.31.6
+```
+
+Verify the result is signed with the real key, not the debug one — a release
+build that silently falls back to the debug keystore installs fine and then
+cannot be updated by a correctly signed build later:
+
+```powershell
+& "F:\Android\Sdk\build-tools\36.0.0\apksigner.bat" verify --print-certs `
+  app\android\app\build\outputs\apk\release\app-release.apk
+```
+
+It should print `CN=Bachat Book, OU=Mobile, O=Bachat Book, L=Lahore, ST=Punjab, C=PK`.
 
 ### What the person installing it will see
 
@@ -143,6 +164,8 @@ It is normal for every sideloaded app.
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `ninja: error: manifest 'build.ninja' still dirty after 100 tries`, on `:react-native-reanimated:buildCMake…` | **The Android SDK's default CMake is 3.22.1, from 2021.** Reanimated globs its sources with `file(GLOB_RECURSE … CONFIGURE_DEPENDS)`, which re-checks the file list on every build. On Windows, CMake 3.22 never settles that check when the project path contains spaces — and this one has two, `My Projects` and `Bachat Book`. It regenerates, sees "changed", regenerates again, and gives up after 100 rounds. | Install a newer CMake **into the SDK on F:**, and point Gradle at it — `sdkmanager "cmake;3.31.6"`, then add `cmake.dir=F:/Android/Sdk/cmake/3.31.6` to `android/local.properties`. Delete the stale `node_modules/*/android/.cxx` folders first or they replay the old manifest. Stay on 3.x: CMake 4 drops support for the `cmake_minimum_required` values several of these libraries still declare. A junction to a space-free path does **not** work — Gradle canonicalises it straight back to the real one. |
+| `AAPT2 … Daemon #0: Link timed out` | Memory, not a broken dependency. AAPT2 daemons are separate OS processes from the Gradle JVM, and parallel builds start several at once. This failed at ~1 GB physically free. | `plugins/with-build-tuning.js` sets `org.gradle.parallel=false`, `workers.max=2`, and two ABIs instead of four. Close Chrome before a build. Raising `org.gradle.jvmargs` is the intuitive move and makes it worse — the daemons need room *beside* the JVM. |
 | `SDK location not found`, or `The filename, directory name, or volume label syntax is incorrect` | Gradle cannot find the Android SDK | `app/android/local.properties` must read `sdk.dir=F:/Android/Sdk` — **forward slashes**. `prebuild` does not create this file. It is a Java properties file, so a backslash starts an escape sequence: `F\:\Android\Sdk` makes `\A` and `\S` invalid and Gradle fails while evaluating the root project, which reads as a React Native plugin bug rather than a path typo. |
 | `Unable to resolve module …` | pnpm's symlinks | Confirm `app/.npmrc` has `node-linker=hoisted`, then `rm -rf node_modules && pnpm install`. |
 | "App not installed" on the phone | `versionCode` not increased | Bump it in `app.json`, rebuild. |

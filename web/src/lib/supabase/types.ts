@@ -36,6 +36,15 @@ export type TaskStatus = "todo" | "in_progress" | "done";
 /** Which way a paid task moves money. Mirrors the entry form's two buttons. */
 export type MovementDirection = "expense" | "income";
 export type TaskRepeatRule = "none" | "daily" | "weekly" | "monthly" | "yearly";
+/** Presets pre-fill categories and a length; `custom` carries no behaviour. */
+export type EventBudgetKind =
+  | "ramadan"
+  | "eid_fitr"
+  | "eid_adha"
+  | "qurbani"
+  | "shaadi"
+  | "school"
+  | "custom";
 /**
  * What an institution IS, for grouping the catalogue.
  *
@@ -274,6 +283,66 @@ export type Database = {
           updated_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["budgets"]["Insert"]>;
+        Relationships: [];
+      };
+      /* Money set aside for an OCCASION rather than a month. Reads the ledger;
+         never writes to it — see the migration for why that matters. */
+      event_budgets: {
+        Row: {
+          id: string;
+          household_id: string;
+          name: string;
+          kind: EventBudgetKind;
+          amount_paisa: number;
+          start_date: string;
+          end_date: string;
+          note: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          name: string;
+          kind?: EventBudgetKind;
+          amount_paisa: number;
+          start_date: string;
+          end_date: string;
+          note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["event_budgets"]["Insert"]>;
+        Relationships: [];
+      };
+      /* Which categories count. NO rows = every expense category in the window. */
+      event_budget_categories: {
+        Row: { event_budget_id: string; category_id: string };
+        Insert: { event_budget_id: string; category_id: string };
+        Update: Partial<
+          Database["public"]["Tables"]["event_budget_categories"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      /* Per-event opinion about ONE movement, held here rather than on the
+         movement — the same transaction can be inside one event and outside
+         another without either view being written onto the ledger row. */
+      event_budget_overrides: {
+        Row: {
+          event_budget_id: string;
+          transaction_id: string;
+          include: boolean;
+          created_at: string;
+        };
+        Insert: {
+          event_budget_id: string;
+          transaction_id: string;
+          include: boolean;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["event_budget_overrides"]["Insert"]
+        >;
         Relationships: [];
       };
       committees: {

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
+import { EventBudgetPanel } from "@/components/event-budget-panel";
 import { createClient } from "@/lib/supabase/client";
 import { formatPKR } from "@/lib/format";
 import type { Tables } from "@/lib/supabase/types";
@@ -229,6 +230,21 @@ export default function BudgetsPage() {
           })}
         </div>
       )}
+
+      {/*
+        Event budgets sit UNDER the monthly caps rather than behind a tab.
+        They are the same question — "how much am I allowing for this?" — asked
+        over a different window, and a household planning Ramadan is usually
+        looking at both at once. A tab would hide whichever one you were not
+        thinking about at the moment you arrived.
+      */}
+      <div className="border-border border-t pt-6">
+        <EventBudgetPanel
+          householdId={householdId}
+          categories={categories}
+          readOnly={session.workspace ? !session.workspace.is_active : false}
+        />
+      </div>
 
       {/* Add Budget Modal */}
       <Modal

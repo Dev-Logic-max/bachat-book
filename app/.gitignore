@@ -44,3 +44,7 @@ yarn-error.*
 # generated native folders
 /ios
 /android
+
+# Release signing. The keystore and its passwords must never be committed:
+# whoever holds them can publish an update that Android accepts as this app.
+credentials/

@@ -5,19 +5,23 @@ import { useLocale } from "next-intl";
 import {
   AlertTriangle,
   ArrowUpRight,
+  Banknote,
+  CalendarDays,
   CheckCircle2,
   CheckSquare,
   ChevronUp,
   Circle,
-  Clock,
+  Coins,
   Flag,
   Kanban,
+  Landmark,
   ListChecks,
   Minus,
   Plus,
   Receipt,
   Repeat,
   RotateCcw,
+  Smartphone,
   Sparkles,
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
@@ -534,15 +538,6 @@ export default function TasksPage() {
                 : "md:grid-cols-3",
             )}
           >
-            {overdue.length > 0 && (
-              <Column
-                title="Overdue"
-                hint="Past their date"
-                tasks={overdue}
-                tone="loss"
-                {...cardProps}
-              />
-            )}
             <Column
               title="To do"
               hint="Nothing ticked yet"
@@ -564,6 +559,19 @@ export default function TasksPage() {
               tone="gain"
               {...cardProps}
             />
+            {/* Last, not first. The three status columns are a pipeline that
+                reads left to right, and cutting into the front of it made the
+                board start on the exception. Overdue is a filter across the
+                first two, so it belongs beside them rather than ahead. */}
+            {overdue.length > 0 && (
+              <Column
+                title="Overdue"
+                hint="Past their date"
+                tasks={overdue}
+                tone="loss"
+                {...cardProps}
+              />
+            )}
           </div>
         </Reveal>
       ) : (
@@ -572,12 +580,13 @@ export default function TasksPage() {
             <div className="bg-surface-subtle text-muted px-4 py-2 text-[10px] font-semibold uppercase tracking-widest">
               {openTasks} open · {byStatus.done.length} completed
             </div>
-            {/* Overdue leads the list too, for the same reason it leads the
-                board — it is the part of "open" that is already costing you. */}
+            {/* The list keeps due-date order across the open columns, so an
+                overdue row is already at the top by definition — there is no
+                separate group to place here. */}
             {[
-              ...overdue,
-              ...byStatus.todo,
-              ...byStatus.inProgress,
+              ...[...overdue, ...byStatus.todo, ...byStatus.inProgress].sort(
+                compareOpen,
+              ),
               ...byStatus.done,
             ].map((t) => (
               <TaskCard key={t.id} task={t} variant="row" {...cardProps} />
@@ -884,14 +893,15 @@ function TaskCard({
           className="min-w-0 flex-1 text-left"
         >
           {/*
-            Wraps to two lines rather than truncating. With four columns the
-            card is ~290px wide and the priority tag takes a bite out of that,
-            so "Electricity Bill (ME…" was the common case — and the title is
-            the one piece of text on the card that has to be readable.
+            One line with an ellipsis, not two.
+            The card is ~290px at four columns and the header already carries a
+            tag and two controls; a title allowed to wrap made a two-line card
+            in one column and a one-line card in the next, so a board of them
+            never lined up. The full text is in the tooltip and in both dialogs.
           */}
           <span
             className={cn(
-              "block line-clamp-2 text-[12.5px] font-medium",
+              "block truncate text-[12.5px] font-medium",
               isDone && "text-muted line-through",
             )}
           >
@@ -899,15 +909,43 @@ function TaskCard({
           </span>
         </button>
 
-        <div className="flex shrink-0 items-center gap-1">
+        {/*
+          PRIORITY IS PINNED TO THE RIGHT EDGE. The controls fade in OVER the
+          tail of the title, immediately to its left.
+
+          Both used to sit in one flex group with the actions outermost, so the
+          tag slid sideways every time the pointer crossed the card — the one
+          thing you scan a whole column for was the one thing that would not
+          hold still. Reserving the space instead just moved the problem: the
+          title then truncated early on every card to hold room for two buttons
+          that are invisible most of the time.
+
+          So the actions are ABSOLUTE, anchored to the tag's start edge, and
+          painted on an opaque background. Nothing in the row reflows on hover —
+          the title keeps its full width, the tag never moves, and the buttons
+          are simply covering the last few characters for as long as the pointer
+          is there. `pointer-events-none` at rest, or an invisible control would
+          still be swallowing clicks meant for the title underneath.
+        */}
+        <div className="relative flex shrink-0 items-center">
+          <div
+            className={cn(
+              "pointer-events-none absolute end-full z-10 flex items-center rounded-control opacity-0 transition-opacity duration-150",
+              "group-hover:pointer-events-auto group-hover:opacity-100",
+              "group-focus-within:pointer-events-auto group-focus-within:opacity-100",
+              variant === "card" ? "bg-surface" : "bg-surface-subtle",
+            )}
+          >
+            <RowActions
+              onEdit={() => onOpen(task)}
+              onDelete={() => onDelete(task)}
+              editLabel="Edit task"
+              deleteLabel="Delete task"
+              reveal="always"
+              className="ps-2"
+            />
+          </div>
           <PriorityTag priority={task.priority} dimmed={isDone} />
-          <RowActions
-            onEdit={() => onOpen(task)}
-            onDelete={() => onDelete(task)}
-            editLabel="Edit task"
-            deleteLabel="Delete task"
-            reveal="hover"
-          />
         </div>
       </div>
 
@@ -916,7 +954,7 @@ function TaskCard({
           line the tags up under the title, but it left a column of dead space
           down the card and pushed the row toward the right edge, which is the
           one place a wrapping chip has nowhere to go. */}
-      <div className="border-border/70 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10.5px]">
+      <div className="border-border/70 mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t pt-2 text-[10px]">
         <DueChip due={task.due_date} tone={tone} isDone={isDone} />
 
         {category && (
@@ -962,8 +1000,17 @@ function TaskCard({
           </span>
         )}
 
+        {/*
+          The account gets its own mark, not just a name. "Abdul Rehman" beside
+          "Rs 980" reads as a person the money went TO until the glyph says it is
+          a place you hold it — and with four or five accounts named after the
+          same person, the type icon is the only thing telling them apart.
+        */}
         {account && task.is_paid && (
-          <span className="text-faint truncate">{account.name}</span>
+          <span className="text-faint inline-flex max-w-32 items-center gap-1">
+            <AccountGlyph type={account.type} />
+            <span className="truncate">{account.name}</span>
+          </span>
         )}
 
         {task.repeat_rule !== "none" && (
@@ -1121,10 +1168,26 @@ function DueChip({
         !isDone && tone === "later" && "text-faint",
       )}
     >
-      <Clock size={9} />
+      {/* A DATE icon, not a clock. Nothing on a task carries a time of day —
+          the field is a due DATE, and a clock face promised a precision the
+          model does not have. */}
+      <CalendarDays size={9} />
       <span className="ltr">{isDone ? due : dueLabel(due)}</span>
     </span>
   );
+}
+
+/** The account's type, as one small glyph. Mirrors `ACCOUNT_TYPE_BY_VALUE`. */
+function AccountGlyph({ type }: { type: string }) {
+  const Icon =
+    type === "cash"
+      ? Banknote
+      : type === "wallet"
+        ? Smartphone
+        : type === "savings"
+          ? Coins
+          : Landmark;
+  return <Icon size={9} className="shrink-0" strokeWidth={1.9} />;
 }
 
 /** Kept so a future status filter has a name to import. */

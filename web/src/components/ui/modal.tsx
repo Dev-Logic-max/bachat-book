@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { createPortal } from "react-dom";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -100,7 +101,31 @@ export function Modal({
 }: ModalProps) {
   const baseId = useOverlayLayer(isOpen, onClose);
 
-  if (!isOpen) return null;
+  /*
+   * A MODAL'S FORM OWNS ONLY ITS OWN SUBMIT.
+   *
+   * Modals nest — Manage categories opens over a half-filled task form, and the
+   * New category sheet opens over that. Each one passes `onSubmit`, so each
+   * renders a <form>, and before the portal below they were physically nested.
+   *
+   * The portal alone does NOT fix it: React propagates events through the REACT
+   * tree, not the DOM tree, so a portalled inner form's submit still reaches the
+   * outer form's `onSubmit`. Clicking "Create category" therefore ran the
+   * category insert AND the task save, and the task save closed the entire
+   * stack — the sheet vanished, nothing was created, and no error was shown
+   * because nothing had failed.
+   *
+   * Exactly the same shape as the Escape fix in `useOverlayLayer`: only the
+   * topmost layer answers, and it must say so explicitly.
+   */
+  const handleSubmit = onSubmit
+    ? (e: React.FormEvent<HTMLFormElement>) => {
+        e.stopPropagation();
+        onSubmit(e);
+      }
+    : undefined;
+
+  if (!isOpen || typeof document === "undefined") return null;
 
   const hasSteps = steps && steps.length > 0;
   const progressPercent = hasSteps ? ((currentStepIndex + 1) / steps.length) * 100 : 0;
@@ -126,7 +151,16 @@ export function Modal({
     </>
   );
 
-  return (
+  /*
+   * Rendered through a PORTAL to <body>.
+   *
+   * Inline, a nested dialog landed inside its parent's <form> — nested <form>
+   * elements are invalid HTML, and the browser's own form-owner rules stop
+   * behaving predictably around them. It also freed the shell from any
+   * `overflow` or `transform` on an ancestor, which is the same reason
+   * RichSelect's popover is portalled.
+   */
+  return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
       {/* Glassmorphic Backdrop */}
       <div
@@ -208,14 +242,15 @@ export function Modal({
           bottom edge of the dialog and its rule runs the full width, exactly
           like the header — it is NOT part of the `p-6` scroll area.
         */}
-        {onSubmit ? (
-          <form onSubmit={onSubmit} className={shellClass}>
+        {handleSubmit ? (
+          <form onSubmit={handleSubmit} className={shellClass}>
             {shellBody}
           </form>
         ) : (
           <div className={shellClass}>{shellBody}</div>
         )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

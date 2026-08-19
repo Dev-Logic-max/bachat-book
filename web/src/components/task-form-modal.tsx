@@ -6,6 +6,8 @@ import {
   ArrowUpRight,
   Bell,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   GripVertical,
   ListChecks,
   Plus,
@@ -216,6 +218,32 @@ export function TaskFormModal({
     if (!t) return;
     setItems((prev) => [...prev, { id: null, title: t, is_done: false }]);
     setNewItem("");
+  };
+
+  /*
+   * Subtask order is REAL — `saveChecklist` writes the array index into
+   * `sort_order`, and the board, the complete dialog and the next occurrence of
+   * a repeating task all read it back. The grip has been on this row since the
+   * form was built and never did anything: it was a picture of a handle.
+   */
+  const [dragIndex, setDragIndex] = React.useState<number | null>(null);
+  const [overIndex, setOverIndex] = React.useState<number | null>(null);
+  const [armed, setArmed] = React.useState<number | null>(null);
+
+  const endDrag = () => {
+    setDragIndex(null);
+    setOverIndex(null);
+    setArmed(null);
+  };
+
+  const moveItem = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= items.length) return;
+    setItems((prev) => {
+      const next = prev.slice();
+      const [row] = next.splice(from, 1);
+      next.splice(to, 0, row);
+      return next;
+    });
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -452,9 +480,67 @@ export function TaskFormModal({
                 {items.map((item, i) => (
                   <li
                     key={item.id ?? `new-${i}`}
-                    className="bg-surface-subtle flex items-center gap-2 rounded-control px-2.5 py-1.5"
+                    /*
+                      Draggable only while the HANDLE is held.
+                      A permanently draggable row swallows text selection inside
+                      its own input — you go to correct a typo and drag the row
+                      instead. `armed` is set on the grip's pointer-down and
+                      cleared when the drag ends.
+                    */
+                    draggable={armed === i}
+                    onDragStart={(e) => {
+                      setDragIndex(i);
+                      e.dataTransfer.effectAllowed = "move";
+                      // Firefox refuses to start a drag without payload.
+                      e.dataTransfer.setData("text/plain", String(i));
+                    }}
+                    onDragOver={(e) => {
+                      if (dragIndex === null) return;
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                      if (overIndex !== i) setOverIndex(i);
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (dragIndex !== null) moveItem(dragIndex, i);
+                      endDrag();
+                    }}
+                    onDragEnd={endDrag}
+                    className={cn(
+                      "bg-surface-subtle flex items-center gap-2 rounded-control px-2.5 py-1.5 transition-colors",
+                      dragIndex === i && "opacity-40",
+                      overIndex === i &&
+                        dragIndex !== null &&
+                        dragIndex !== i &&
+                        "ring-brass/60 ring-2",
+                    )}
                   >
-                    <GripVertical size={12} className="text-faint shrink-0" />
+                    {/*
+                      The handle is a real button, so the list is reorderable
+                      from the keyboard too — HTML5 drag has no keyboard path at
+                      all, and a grip that only responds to a mouse is a grip
+                      half the users cannot operate.
+                    */}
+                    <button
+                      type="button"
+                      aria-label={`Reorder ${item.title}. Use arrow up and arrow down.`}
+                      title="Drag to reorder, or focus and use ↑ ↓"
+                      onPointerDown={() => setArmed(i)}
+                      onPointerUp={() => setArmed(null)}
+                      onKeyDown={(e) => {
+                        if (e.key === "ArrowUp") {
+                          e.preventDefault();
+                          moveItem(i, i - 1);
+                        } else if (e.key === "ArrowDown") {
+                          e.preventDefault();
+                          moveItem(i, i + 1);
+                        }
+                      }}
+                      className="text-faint hover:text-foreground-2 focus-visible:ring-brass/40 -ms-1 flex size-5 shrink-0 cursor-grab items-center justify-center rounded transition-colors focus-visible:ring-2 focus-visible:outline-none active:cursor-grabbing"
+                    >
+                      <GripVertical size={12} />
+                    </button>
+
                     <input
                       value={item.title}
                       onChange={(e) =>
@@ -466,11 +552,40 @@ export function TaskFormModal({
                       }
                       className="text-foreground min-w-0 flex-1 bg-transparent text-[12px] outline-none"
                     />
+
                     {item.is_done && (
                       <span className="bg-gain-soft text-gain shrink-0 rounded-full px-1.5 py-0.5 text-[9.5px] font-semibold">
                         done
                       </span>
                     )}
+
+                    {/*
+                      Touch has no HTML5 drag at all, so below `lg` the same job
+                      is done by two taps. Hidden at desktop widths, where the
+                      handle already does it and two more glyphs per row would
+                      just be noise.
+                    */}
+                    <span className="flex shrink-0 items-center lg:hidden">
+                      <button
+                        type="button"
+                        onClick={() => moveItem(i, i - 1)}
+                        disabled={i === 0}
+                        aria-label={`Move ${item.title} up`}
+                        className="text-muted disabled:opacity-25 flex size-6 items-center justify-center rounded-full"
+                      >
+                        <ChevronUp size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => moveItem(i, i + 1)}
+                        disabled={i === items.length - 1}
+                        aria-label={`Move ${item.title} down`}
+                        className="text-muted disabled:opacity-25 flex size-6 items-center justify-center rounded-full"
+                      >
+                        <ChevronDown size={13} />
+                      </button>
+                    </span>
+
                     <button
                       type="button"
                       onClick={() => setItems((prev) => prev.filter((_, pi) => pi !== i))}

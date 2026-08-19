@@ -1,291 +1,301 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  ScrollView,
-  TouchableOpacity,
-  RefreshControl,
-} from 'react-native';
+import React, { useMemo } from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useSession } from '../../src/providers/auth-provider';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees, toDateString } from '../../src/lib/format';
-import { Card } from '../../src/components/ui/Card';
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Bell,
+  Inbox,
+  TriangleAlert,
+  Wallet,
+} from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card, NavyPanel, SectionHeader, StatTile } from '../../src/components/ui/Surfaces';
+import { Money, Numeric } from '../../src/components/ui/Money';
+import { CategoryGlyph } from '../../src/components/ui/CategoryGlyph';
+import { EmptyState, Reveal, Skeleton, SkeletonRow } from '../../src/components/ui/Feedback';
+import { IconButton } from '../../src/components/ui/Button';
 import { T } from '../../src/components/T';
-import { useAccounts } from '../../src/hooks/use-accounts';
-import { useQuickEntries } from '../../src/hooks/use-entries';
-import { UnsyncedBanner } from '../../src/components/UnsyncedBanner';
-import { LogOut, ArrowDownLeft, ArrowUpRight, Wallet, Camera, Shield } from 'lucide-react-native';
+import { usePalette } from '../../src/providers/theme-provider';
+import { useSession } from '../../src/providers/auth-provider';
+import { useEntries } from '../../src/hooks/use-entries';
+import { useHeldTotal, useLiveAccounts } from '../../src/hooks/use-accounts';
+import { flowTotals, categoryLabel } from '../../src/lib/ledger';
+import { formatName, toDateString } from '../../src/lib/format';
+import { spacing, typography, radii } from '../../src/theme/tokens';
 
 export default function OverviewScreen() {
+  const palette = usePalette();
   const router = useRouter();
-  const { profile, user, signOut } = useSession();
+  const { profile } = useSession();
 
-  const { data: accounts = [], isLoading: accountsLoading, refetch: refetchAccounts } = useAccounts();
-  const { data: entries = [], isLoading: entriesLoading, refetch: refetchEntries } = useQuickEntries();
-  const [refreshing, setRefreshing] = useState(false);
+  const accounts = useLiveAccounts();
+  const heldPaisa = useHeldTotal();
+  const { data: entries = [], isLoading, error, refetch, isRefetching } = useEntries({ limit: 60 });
 
-  // Total balance summed from active accounts
-  const totalBalancePaisa = accounts.reduce((sum, acc) => sum + (acc.balance_paisa || 0), 0);
+  // This calendar month's flow. Transfers and opening balances are already out
+  // — `useEntries` filters them at the query and `flowTotals` again by type — so
+  // an ATM withdrawal cannot read as income and expenditure at once.
+  const month = useMemo(() => {
+    const now = new Date();
+    const first = toDateString(new Date(now.getFullYear(), now.getMonth(), 1));
+    return flowTotals(entries.filter((e) => e.date >= first));
+  }, [entries]);
 
-  // Month filtering in local date representation (L9 Karachi date fix)
-  const now = new Date();
-  const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-  const currentMonthEntries = entries.filter((e) => e.entry_date.startsWith(currentYearMonth));
-
-  let monthlyIncomePaisa = 0;
-  let monthlyExpensePaisa = 0;
-
-  currentMonthEntries.forEach((e) => {
-    if (e.type === 'income') monthlyIncomePaisa += e.amount_paisa;
-    else if (e.type === 'expense') monthlyExpensePaisa += e.amount_paisa;
-  });
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await Promise.all([refetchAccounts(), refetchEntries()]);
-    setRefreshing(false);
-  };
-
-  const displayName = profile?.first_name || user?.email?.split('@')[0] || 'User';
+  const recent = entries.slice(0, 6);
+  const locale = profile?.locale ?? 'en';
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <UnsyncedBanner />
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.brass} />
-        }
+    <Screen refreshing={isRefetching} onRefresh={refetch}>
+      {/* ---- Greeting ------------------------------------------------- */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          marginBottom: spacing.xl,
+        }}
       >
-        {/* Top Header Bar */}
-        <View style={styles.topHeader}>
-          <View>
-            <T style={styles.greetingText}>Assalam-o-Alaikum,</T>
-            <T style={styles.nameText}>{displayName}</T>
-          </View>
-          <TouchableOpacity style={styles.iconBtn} onPress={signOut}>
-            <LogOut size={20} color={colors.light.foreground2} />
-          </TouchableOpacity>
+        <View style={{ flex: 1 }}>
+          <T style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>
+            {greeting()}
+          </T>
+          <T
+            style={{
+              fontSize: typography.fontSize.xxl,
+              fontWeight: '700',
+              color: palette.foreground,
+              marginTop: 2,
+            }}
+            numberOfLines={1}
+          >
+            {formatName(profile?.first_name, profile?.last_name, 'there')}
+          </T>
         </View>
+        <IconButton accessibilityLabel="Notifications" onPress={() => router.push('/more' as never)}>
+          <Bell size={19} color={palette.foreground2} />
+        </IconButton>
+      </View>
 
-        {/* Dark Mass Hero Navy Card (SPEC §2) */}
-        <Card variant="navy" style={styles.heroCard}>
-          <View style={styles.heroHeader}>
-            <T style={styles.heroLabel}>Total Net Worth</T>
-            <Shield size={18} color={colors.light.brass} />
+      {/* ---- Net worth hero ------------------------------------------- */}
+      <Reveal>
+        <NavyPanel>
+          <T
+            style={{
+              fontSize: typography.fontSize.sm,
+              color: palette.onNavyMuted,
+              fontWeight: '600',
+              letterSpacing: 0.4,
+            }}
+          >
+            What you hold
+          </T>
+
+          {isLoading && accounts.length === 0 ? (
+            <Skeleton width="70%" height={44} style={{ marginTop: spacing.md }} />
+          ) : (
+            <Money
+              paisa={heldPaisa}
+              variant="hero"
+              color={palette.onNavy}
+              style={{ marginTop: spacing.sm }}
+            />
+          )}
+
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: spacing.sm,
+              marginTop: spacing.lg,
+            }}
+          >
+            <Wallet size={15} color={palette.onNavyMuted} />
+            <T style={{ fontSize: typography.fontSize.sm, color: palette.onNavyMuted }}>
+              across {accounts.length} {accounts.length === 1 ? 'account' : 'accounts'}
+            </T>
           </View>
+        </NavyPanel>
+      </Reveal>
 
-          <Text style={[styles.heroAmount, styles.tabular]}>
-            {formatRupees(totalBalancePaisa)}
-          </Text>
+      {/* ---- Month flow ------------------------------------------------ */}
+      <Reveal index={1}>
+        <View style={{ flexDirection: 'row', gap: spacing.md, marginTop: spacing.lg }}>
+          <StatTile
+            label="IN THIS MONTH"
+            tone={5}
+            icon={<ArrowDownLeft size={14} color={palette.gain} strokeWidth={2.5} />}
+          >
+            <Money paisa={month.inPaisa} variant="title" compact color={palette.gain} />
+          </StatTile>
+          <StatTile
+            label="OUT THIS MONTH"
+            tone={6}
+            icon={<ArrowUpRight size={14} color={palette.loss} strokeWidth={2.5} />}
+          >
+            <Money paisa={month.outPaisa} variant="title" compact color={palette.loss} />
+          </StatTile>
+        </View>
+      </Reveal>
 
-          <View style={styles.heroDivider} />
-
-          <View style={styles.statsRow}>
-            <View style={styles.statItem}>
-              <View style={styles.statBadgeGain}>
-                <ArrowDownLeft size={16} color={colors.light.gain} />
-              </View>
-              <View style={styles.statTextGroup}>
-                <T style={styles.statLabel}>Income (Month)</T>
-                <Text style={[styles.statValueGain, styles.tabular]}>
-                  {formatRupees(monthlyIncomePaisa)}
-                </Text>
-              </View>
+      {/* ---- Net for the month ----------------------------------------- */}
+      <Reveal index={2}>
+        <Card style={{ marginTop: spacing.md }}>
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+            }}
+          >
+            <View style={{ flex: 1 }}>
+              <T style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>
+                Left over this month
+              </T>
+              <T
+                style={{
+                  fontSize: typography.fontSize.xs,
+                  color: palette.faint,
+                  marginTop: 2,
+                }}
+              >
+                {month.netPaisa >= 0 ? 'You are ahead' : 'You are spending more than you earn'}
+              </T>
             </View>
-
-            <View style={styles.statItem}>
-              <View style={styles.statBadgeLoss}>
-                <ArrowUpRight size={16} color={colors.light.loss} />
-              </View>
-              <View style={styles.statTextGroup}>
-                <T style={styles.statLabel}>Expense (Month)</T>
-                <Text style={[styles.statValueLoss, styles.tabular]}>
-                  {formatRupees(monthlyExpensePaisa)}
-                </Text>
-              </View>
-            </View>
+            <Money paisa={month.netPaisa} variant="title" signed showPlus compact />
           </View>
         </Card>
+      </Reveal>
 
-        {/* Quick Action Grid */}
-        <T style={styles.sectionTitle}>Quick Actions</T>
-        <View style={styles.actionGrid}>
-          <TouchableOpacity
-            style={styles.actionCard}
-            onPress={() => router.push('/entry/new')}
-            activeOpacity={0.8}
-          >
-            <View style={[styles.actionIconBg, { backgroundColor: colors.light.brassSoft }]}>
-              <Wallet size={22} color={colors.light.brassStrong} />
-            </View>
-            <T style={styles.actionTitle}>Add Entry</T>
-            <T style={styles.actionSub}>Log daily cash/expense</T>
-          </TouchableOpacity>
+      {/* ---- Recent ----------------------------------------------------- */}
+      <View style={{ marginTop: spacing.xxl }}>
+        <SectionHeader
+          title="Recent"
+          actionLabel={entries.length ? 'See all' : undefined}
+          onAction={entries.length ? () => router.push('/entries' as never) : undefined}
+        />
 
-          <TouchableOpacity
-            style={styles.actionCard}
-            onPress={() => router.push('/(tabs)/transactions')}
-            activeOpacity={0.8}
-          >
-            <View style={[styles.actionIconBg, { backgroundColor: colors.light.surfaceSubtle }]}>
-              <Camera size={22} color={colors.light.navy900} />
+        <Card padded={false}>
+          {error ? (
+            // A failed query must never wear the empty state's clothes. "Nothing
+            // here" and "the request failed" are different facts and only one of
+            // them means the household has logged nothing.
+            <EmptyState
+              variant="error"
+              icon={<TriangleAlert size={26} color={palette.loss} />}
+              title="Could not load your entries"
+              body={error instanceof Error ? error.message : 'Pull down to try again.'}
+            />
+          ) : isLoading ? (
+            <View style={{ paddingHorizontal: spacing.xl }}>
+              <SkeletonRow />
+              <SkeletonRow />
+              <SkeletonRow />
             </View>
-            <T style={styles.actionTitle}>Receipt Scan</T>
-            <T style={styles.actionSub}>OCR bill capture</T>
-          </TouchableOpacity>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+          ) : recent.length === 0 ? (
+            <EmptyState
+              icon={<Inbox size={26} color={palette.muted} />}
+              title="Nothing logged yet"
+              body="Tap the + button below to log your first expense or income."
+            />
+          ) : (
+            recent.map((entry, i) => (
+              <EntryRowItem
+                key={entry.id}
+                entry={entry}
+                locale={locale}
+                last={i === recent.length - 1}
+                onPress={() => router.push(`/entry/${entry.id}` as never)}
+              />
+            ))
+          )}
+        </Card>
+      </View>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  scrollContent: {
-    padding: spacing.lg,
-  },
-  topHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.lg,
-  },
-  greetingText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-  },
-  nameText: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  iconBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: radii.full,
-    backgroundColor: colors.light.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  heroCard: {
-    marginBottom: spacing.xl,
-  },
-  heroHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.xs,
-  },
-  heroLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.onNavyMuted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  heroAmount: {
-    fontSize: typography.fontSize.display,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.onNavy,
-    marginVertical: spacing.xs,
-  },
-  heroDivider: {
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.1)',
-    marginVertical: spacing.md,
-  },
-  statsRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  statItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    flex: 1,
-  },
-  statBadgeGain: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.light.gainSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.sm,
-  },
-  statBadgeLoss: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: colors.light.lossSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.sm,
-  },
-  statTextGroup: {
-    flex: 1,
-  },
-  statLabel: {
-    fontSize: 10,
-    color: colors.light.onNavyMuted,
-  },
-  statValueGain: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.onNavy,
-  },
-  statValueLoss: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.onNavy,
-  },
-  tabular: {
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  sectionTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-    marginBottom: spacing.md,
-  },
-  actionGrid: {
-    flexDirection: 'row',
-    gap: spacing.md,
-  },
-  actionCard: {
-    flex: 1,
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  actionIconBg: {
-    width: 42,
-    height: 42,
-    borderRadius: radii.md,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.sm,
-  },
-  actionTitle: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.foreground,
-  },
-  actionSub: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 2,
-  },
-});
+/**
+ * One movement.
+ *
+ * The amount is coloured and signed by the SIGN of `amount_paisa`, never by
+ * `type`. They cannot disagree — `transactions_amount_sign_check` sees to that —
+ * and the sign is what the balance trigger actually added to the account.
+ */
+export function EntryRowItem({
+  entry,
+  locale,
+  last,
+  onPress,
+}: {
+  entry: {
+    id: string;
+    amount_paisa: number;
+    date: string;
+    note: string | null;
+    account: { name: string; deleted_at: string | null } | null;
+    category: { id: string; name: string; name_ur: string | null; icon: string; tone: number } | null;
+  };
+  locale: string;
+  last?: boolean;
+  onPress?: () => void;
+}) {
+  const palette = usePalette();
+  const amount = Number(entry.amount_paisa);
+
+  const title = entry.category
+    ? categoryLabel(entry.category as never, locale)
+    : entry.note || 'Uncategorised';
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.lg - 2,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: palette.border,
+        backgroundColor: pressed ? palette.surfaceSubtle : 'transparent',
+      })}
+    >
+      <CategoryGlyph icon={entry.category?.icon} tone={entry.category?.tone} size={44} />
+
+      <View style={{ flex: 1, gap: 3 }}>
+        <T
+          style={{ fontSize: typography.fontSize.base, fontWeight: '600', color: palette.foreground }}
+          numberOfLines={1}
+        >
+          {title}
+        </T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2 }}>
+          <Numeric style={{ fontSize: typography.fontSize.xs, color: palette.faint }}>
+            {entry.date}
+          </Numeric>
+          {entry.account ? (
+            <>
+              <Text style={{ color: palette.faint, fontSize: typography.fontSize.xs }}>·</Text>
+              <T
+                style={{ fontSize: typography.fontSize.xs, color: palette.faint, flexShrink: 1 }}
+                numberOfLines={1}
+              >
+                {entry.account.deleted_at ? 'Deleted account' : entry.account.name}
+              </T>
+            </>
+          ) : null}
+        </View>
+      </View>
+
+      <Money paisa={amount} variant="body" signed showPlus />
+    </Pressable>
+  );
+}
+
+function greeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 17) return 'Good afternoon';
+  return 'Good evening';
+}

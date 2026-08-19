@@ -1,198 +1,194 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-} from 'react-native';
+import React from 'react';
+import { View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { supabase } from '../../src/lib/supabase';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees } from '../../src/lib/format';
+import { useQuery } from '@tanstack/react-query';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, TriangleAlert, Users } from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card, NavyPanel, SectionHeader } from '../../src/components/ui/Surfaces';
+import { Money, Numeric } from '../../src/components/ui/Money';
+import { EmptyState, Skeleton } from '../../src/components/ui/Feedback';
+import { IconButton } from '../../src/components/ui/Button';
 import { T } from '../../src/components/T';
+import { usePalette } from '../../src/providers/theme-provider';
+import { supabase } from '../../src/lib/supabase';
+import { spacing, typography } from '../../src/theme/tokens';
 import type { Tables } from '../../types/database';
-import { ArrowLeft, Users, Info } from 'lucide-react-native';
 
 export default function CommitteeDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const palette = usePalette();
+  const insets = useSafeAreaInsets();
 
-  const [committee, setCommittee] = useState<Tables<'committees'> | null>(null);
-  const [loading, setLoading] = useState(true);
+  const { data: committee, isLoading, error } = useQuery({
+    queryKey: ['committee', id],
+    queryFn: async (): Promise<Tables<'committees'> | null> => {
+      if (!id) return null;
+      const { data, error } = await supabase
+        .from('committees')
+        .select('*')
+        .eq('id', id)
+        .single();
 
-  useEffect(() => {
-    if (!id) return;
-    supabase
-      .from('committees')
-      .select('*')
-      .eq('id', id)
-      .single()
-      .then(({ data }) => {
-        if (data) setCommittee(data);
-        setLoading(false);
-      });
-  }, [id]);
+      if (error) throw error;
+      return data;
+    },
+    enabled: !!id,
+  });
 
-  if (loading || !committee) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <ArrowLeft size={20} color={colors.light.foreground} />
-          </TouchableOpacity>
-        </View>
-      </SafeAreaView>
-    );
-  }
+  const potPaisa = committee
+    ? Number(committee.monthly_contribution_paisa) * committee.total_members
+    : 0;
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <ArrowLeft size={20} color={colors.light.foreground} />
-        </TouchableOpacity>
-        <T style={styles.headerTitle}>{committee.name}</T>
-        <View style={{ width: 36 }} />
+    <View style={{ flex: 1, backgroundColor: palette.canvas }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: spacing.lg,
+          paddingTop: insets.top + spacing.sm,
+          paddingBottom: spacing.sm,
+        }}
+      >
+        <IconButton accessibilityLabel="Back" onPress={() => router.back()}>
+          <ArrowLeft size={19} color={palette.foreground2} />
+        </IconButton>
+        <T
+          style={{
+            flex: 1,
+            textAlign: 'center',
+            fontSize: typography.fontSize.lg,
+            fontWeight: '700',
+            color: palette.foreground,
+          }}
+          numberOfLines={1}
+        >
+          {committee?.name ?? 'Committee'}
+        </T>
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.card}>
-          <View style={styles.titleRow}>
-            <Users size={24} color={colors.light.brassStrong} />
-            <T style={styles.cardTitle}>{committee.name}</T>
-          </View>
+      <Screen topInset={false}>
+        {error ? (
+          <Card padded={false}>
+            <EmptyState
+              variant="error"
+              icon={<TriangleAlert size={26} color={palette.loss} />}
+              title="Could not load this committee"
+              body={error instanceof Error ? error.message : undefined}
+            />
+          </Card>
+        ) : isLoading || !committee ? (
+          <Card style={{ gap: spacing.md }}>
+            <Skeleton width="60%" height={32} />
+            <Skeleton width="80%" height={16} />
+          </Card>
+        ) : (
+          <>
+            <NavyPanel>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+                <Users size={15} color={palette.onNavyMuted} />
+                <T style={{ fontSize: typography.fontSize.sm, color: palette.onNavyMuted, fontWeight: '600' }}>
+                  The pot each month
+                </T>
+              </View>
+              <Money
+                paisa={potPaisa}
+                variant="hero"
+                color={palette.onNavy}
+                style={{ marginTop: spacing.sm }}
+              />
+              <T
+                style={{
+                  fontSize: typography.fontSize.sm,
+                  color: palette.onNavyMuted,
+                  marginTop: spacing.md,
+                }}
+              >
+                {committee.payout_received
+                  ? 'You have taken your turn.'
+                  : `Your turn is month ${committee.my_payout_month} of ${committee.total_members}.`}
+              </T>
+            </NavyPanel>
 
-          <View style={styles.row}>
-            <T style={styles.label}>Monthly Contribution</T>
-            <Text style={styles.val}>{formatRupees(committee.monthly_contribution_paisa)}</Text>
-          </View>
-
-          <View style={styles.row}>
-            <T style={styles.label}>Total Members</T>
-            <Text style={styles.val}>{committee.total_members}</Text>
-          </View>
-
-          <View style={styles.row}>
-            <T style={styles.label}>My Payout Month</T>
-            <Text style={styles.val}>Month {committee.my_payout_month}</Text>
-          </View>
-
-          <View style={styles.row}>
-            <T style={styles.label}>Payout Status</T>
-            <T style={[styles.val, { color: committee.payout_received ? colors.light.gain : colors.light.warn }]}>
-              {committee.payout_received ? 'Received' : 'Pending'}
-            </T>
-          </View>
-
-          {committee.notes && (
-            <View style={styles.notesBox}>
-              <T style={styles.label}>Notes</T>
-              <T style={styles.notesText}>{committee.notes}</T>
+            <View style={{ marginTop: spacing.xxl }}>
+              <SectionHeader title="Terms" />
+              <Card padded={false}>
+                <DetailRow label="You pay each month">
+                  <Money paisa={committee.monthly_contribution_paisa} variant="body" />
+                </DetailRow>
+                <DetailRow label="Members">
+                  <Numeric
+                    style={{ fontSize: typography.fontSize.base, fontWeight: '600', color: palette.foreground }}
+                  >
+                    {String(committee.total_members)}
+                  </Numeric>
+                </DetailRow>
+                <DetailRow label="Started">
+                  <Numeric
+                    style={{ fontSize: typography.fontSize.base, fontWeight: '600', color: palette.foreground }}
+                  >
+                    {committee.start_date}
+                  </Numeric>
+                </DetailRow>
+                <DetailRow label="Your payout" last>
+                  <T
+                    style={{
+                      fontSize: typography.fontSize.base,
+                      fontWeight: '600',
+                      color: committee.payout_received ? palette.gain : palette.warn,
+                    }}
+                  >
+                    {committee.payout_received ? 'Received' : 'Not yet'}
+                  </T>
+                </DetailRow>
+              </Card>
             </View>
-          )}
-        </View>
 
-        <View style={styles.infoBox}>
-          <Info size={18} color={colors.light.navy900} />
-          <T style={styles.infoText}>
-            Committee details are read-only on mobile (v1). Member schedule management and XIRR benchmarks are managed via the web portal.
-          </T>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+            {committee.notes ? (
+              <View style={{ marginTop: spacing.xxl }}>
+                <SectionHeader title="Notes" />
+                <Card>
+                  <T style={{ fontSize: typography.fontSize.sm, color: palette.foreground2, lineHeight: 20 }}>
+                    {committee.notes}
+                  </T>
+                </Card>
+              </View>
+            ) : null}
+          </>
+        )}
+      </Screen>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  content: {
-    padding: spacing.lg,
-  },
-  card: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    marginBottom: spacing.lg,
-  },
-  titleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    marginBottom: spacing.lg,
-  },
-  cardTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  row: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-  },
-  label: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-  },
-  val: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  notesBox: {
-    marginTop: spacing.md,
-  },
-  notesText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.foreground2,
-    marginTop: 4,
-  },
-  infoBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.light.brassSoft,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    gap: spacing.sm,
-  },
-  infoText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.navy900,
-    flex: 1,
-    lineHeight: 18,
-  },
-});
+function DetailRow({
+  label,
+  children,
+  last,
+}: {
+  label: string;
+  children: React.ReactNode;
+  last?: boolean;
+}) {
+  const palette = usePalette();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: spacing.lg,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.lg,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: palette.border,
+      }}
+    >
+      <T style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>{label}</T>
+      {children}
+    </View>
+  );
+}

@@ -1,254 +1,202 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
-} from 'react-native';
+import React from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees } from '../../src/lib/format';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, ArrowLeftRight, Inbox, Lock, TriangleAlert } from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card, NavyPanel, SectionHeader } from '../../src/components/ui/Surfaces';
+import { Money, Numeric } from '../../src/components/ui/Money';
+import { CategoryGlyph } from '../../src/components/ui/CategoryGlyph';
+import { EmptyState, SkeletonRow } from '../../src/components/ui/Feedback';
+import { IconButton } from '../../src/components/ui/Button';
 import { T } from '../../src/components/T';
+import { usePalette } from '../../src/providers/theme-provider';
+import { useSession } from '../../src/providers/auth-provider';
 import { useAccounts, useAccountLedger } from '../../src/hooks/use-accounts';
-import type { Tables } from '../../types/database';
-import { ArrowLeft, Landmark, ArrowDownLeft, ArrowUpRight } from 'lucide-react-native';
+import { ACCOUNT_TYPE_LABEL, categoryLabel } from '../../src/lib/ledger';
+import { radii, spacing, typography } from '../../src/theme/tokens';
 
 export default function AccountLedgerScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
+  const palette = usePalette();
+  const insets = useSafeAreaInsets();
+  const { profile } = useSession();
+  const locale = profile?.locale ?? 'en';
 
   const { data: accounts = [] } = useAccounts();
-  const account = accounts.find((a) => a.id === id) || null;
+  const account = accounts.find((a) => a.id === id) ?? null;
 
-  const { data: transactions = [], isLoading, refetch } = useAccountLedger(id || '');
-  const [refreshing, setRefreshing] = useState(false);
+  const { data: movements = [], isLoading, error, refetch, isRefetching } = useAccountLedger(id);
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  };
-
-  const renderTxItem = ({ item }: { item: Tables<'transactions'> }) => {
-    const isIncome = item.amount_paisa > 0;
-
-    return (
-      <View style={styles.txRow}>
-        <View
-          style={[
-            styles.txBadge,
-            { backgroundColor: isIncome ? colors.light.gainSoft : colors.light.lossSoft },
-          ]}
-        >
-          {isIncome ? (
-            <ArrowDownLeft size={18} color={colors.light.gain} />
-          ) : (
-            <ArrowUpRight size={18} color={colors.light.loss} />
-          )}
-        </View>
-
-        <View style={styles.txMeta}>
-          <T style={styles.txType}>{item.type.toUpperCase()}</T>
-          <T style={styles.txDate}>{item.date} {item.note ? `• ${item.note}` : ''}</T>
-        </View>
-
-        <Text
-          style={[
-            styles.txAmount,
-            { color: isIncome ? colors.light.gain : colors.light.foreground },
-          ]}
-        >
-          {isIncome ? '+' : ''}{formatRupees(item.amount_paisa)}
-        </Text>
-      </View>
-    );
-  };
+  const state = account?.deleted_at ? 'Deleted' : account?.is_archived ? 'Deactivated' : null;
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <ArrowLeft size={20} color={colors.light.foreground} />
-        </TouchableOpacity>
-        <T style={styles.headerTitle}>{account?.name || 'Account Ledger'}</T>
-        <View style={{ width: 36 }} />
+    <View style={{ flex: 1, backgroundColor: palette.canvas }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: spacing.lg,
+          paddingTop: insets.top + spacing.sm,
+          paddingBottom: spacing.sm,
+        }}
+      >
+        <IconButton accessibilityLabel="Back" onPress={() => router.back()}>
+          <ArrowLeft size={19} color={palette.foreground2} />
+        </IconButton>
+        <T
+          style={{ fontSize: typography.fontSize.lg, fontWeight: '700', color: palette.foreground, flex: 1, textAlign: 'center' }}
+          numberOfLines={1}
+        >
+          {account?.name ?? 'Account'}
+        </T>
+        <View style={{ width: 40 }} />
       </View>
 
-      {/* Account Hero Header */}
-      {account && (
-        <View style={styles.accountHero}>
-          <View style={styles.heroRow}>
-            <View style={styles.iconBg}>
-              <Landmark size={24} color={colors.light.navy900} />
+      <Screen topInset={false} refreshing={isRefetching} onRefresh={refetch}>
+        {account ? (
+          <NavyPanel>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm }}>
+              <T
+                style={{
+                  fontSize: typography.fontSize.sm,
+                  color: palette.onNavyMuted,
+                  fontWeight: '600',
+                }}
+              >
+                {ACCOUNT_TYPE_LABEL[account.type] ?? account.type} · {account.currency}
+              </T>
+              {account.is_locked ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Lock size={11} color={palette.brass} />
+                  <Text style={{ fontSize: 10, fontWeight: '700', color: palette.brass }}>
+                    PAY IN ONLY
+                  </Text>
+                </View>
+              ) : null}
             </View>
-            <View>
-              <T style={styles.heroTitle}>{account.name}</T>
-              <T style={styles.heroSub}>{account.type.toUpperCase()} • {account.currency}</T>
-            </View>
-          </View>
 
-          <View style={styles.balanceBlock}>
-            <T style={styles.balanceLabel}>Current Ledger Balance</T>
-            <Text style={styles.balanceVal}>{formatRupees(account.balance_paisa)}</Text>
-          </View>
+            <Money
+              paisa={account.balance_paisa}
+              variant="hero"
+              color={palette.onNavy}
+              style={{ marginTop: spacing.sm }}
+            />
+
+            {state ? (
+              <T
+                style={{
+                  fontSize: typography.fontSize.xs,
+                  color: palette.onNavyMuted,
+                  marginTop: spacing.md,
+                }}
+              >
+                {state === 'Deleted'
+                  ? 'This account is deleted. Its past movements stay so your history still reads.'
+                  : 'This account is switched off. It is out of your total and hidden from pickers.'}
+              </T>
+            ) : null}
+          </NavyPanel>
+        ) : null}
+
+        <View style={{ marginTop: spacing.xxl }}>
+          <SectionHeader title="Statement" />
+
+          <Card padded={false}>
+            {error ? (
+              <EmptyState
+                variant="error"
+                icon={<TriangleAlert size={26} color={palette.loss} />}
+                title="Could not load this statement"
+                body={error instanceof Error ? error.message : 'Pull down to try again.'}
+              />
+            ) : isLoading ? (
+              <View style={{ paddingHorizontal: spacing.xl }}>
+                <SkeletonRow />
+                <SkeletonRow />
+                <SkeletonRow />
+              </View>
+            ) : movements.length === 0 ? (
+              <EmptyState
+                icon={<Inbox size={26} color={palette.muted} />}
+                title="Nothing on this account yet"
+                body="Accounts start at Rs 0. Money arrives by logging an income entry against this account."
+              />
+            ) : (
+              movements.map((movement, i) => {
+                const isTransfer = movement.type === 'transfer';
+                const amount = Number(movement.amount_paisa);
+
+                return (
+                  <Pressable
+                    key={movement.id}
+                    onPress={() => router.push(`/entry/${movement.id}` as never)}
+                    style={({ pressed }) => ({
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: spacing.md,
+                      paddingHorizontal: spacing.xl,
+                      paddingVertical: spacing.lg - 2,
+                      borderBottomWidth: i === movements.length - 1 ? 0 : 1,
+                      borderBottomColor: palette.border,
+                      backgroundColor: pressed ? palette.surfaceSubtle : 'transparent',
+                    })}
+                  >
+                    {isTransfer ? (
+                      <View
+                        style={{
+                          width: 44,
+                          height: 44,
+                          borderRadius: radii.md,
+                          backgroundColor: palette.surfaceSubtle,
+                          borderWidth: 1,
+                          borderColor: palette.border,
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <ArrowLeftRight size={19} color={palette.foreground2} />
+                      </View>
+                    ) : (
+                      <CategoryGlyph
+                        icon={movement.category?.icon}
+                        tone={movement.category?.tone}
+                        size={44}
+                      />
+                    )}
+
+                    <View style={{ flex: 1, gap: 3 }}>
+                      <T
+                        style={{
+                          fontSize: typography.fontSize.base,
+                          fontWeight: '600',
+                          color: palette.foreground,
+                        }}
+                        numberOfLines={1}
+                      >
+                        {isTransfer
+                          ? `Transfer · ${movement.transfer_account?.name ?? 'another account'}`
+                          : movement.category
+                            ? categoryLabel(movement.category as never, locale)
+                            : movement.note || 'Uncategorised'}
+                      </T>
+                      <Numeric style={{ fontSize: typography.fontSize.xs, color: palette.faint }}>
+                        {movement.date}
+                        {movement.is_opening ? '  ·  opening balance' : ''}
+                      </Numeric>
+                    </View>
+
+                    {/* Signed by the SIGN of the amount, never by `type`. */}
+                    <Money paisa={amount} variant="body" signed showPlus />
+                  </Pressable>
+                );
+              })
+            )}
+          </Card>
         </View>
-      )}
-
-      {/* Transaction List */}
-      <FlatList
-        data={transactions}
-        keyExtractor={(item) => item.id}
-        renderItem={renderTxItem}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.brass} />
-        }
-        ListEmptyComponent={
-          !isLoading ? (
-            <View style={styles.emptyBox}>
-              <T style={styles.emptyTitle}>No Transactions</T>
-              <T style={styles.emptySub}>No posted transactions found for this account.</T>
-            </View>
-          ) : null
-        }
-      />
-    </SafeAreaView>
+      </Screen>
+    </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  accountHero: {
-    backgroundColor: colors.light.surface,
-    padding: spacing.xl,
-    marginHorizontal: spacing.lg,
-    marginTop: spacing.md,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  heroRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  iconBg: {
-    width: 48,
-    height: 48,
-    borderRadius: radii.md,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  heroTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  heroSub: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 2,
-  },
-  balanceBlock: {
-    marginTop: spacing.lg,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.light.border,
-  },
-  balanceLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-  },
-  balanceVal: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-    marginTop: 2,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  listContent: {
-    padding: spacing.lg,
-  },
-  txRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.md,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  txBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.md,
-  },
-  txMeta: {
-    flex: 1,
-  },
-  txType: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground,
-  },
-  txDate: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 2,
-  },
-  txAmount: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.bold,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  emptyBox: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxl,
-  },
-  emptyTitle: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground2,
-  },
-  emptySub: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 4,
-  },
-});

@@ -1,221 +1,191 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  RefreshControl,
-} from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import React from 'react';
+import { Text, View } from 'react-native';
+import { useQuery } from '@tanstack/react-query';
+import { CircleCheck, Clock, TriangleAlert, Users } from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card, SectionHeader, ToneCard } from '../../src/components/ui/Surfaces';
+import { Money, Numeric } from '../../src/components/ui/Money';
+import { EmptyState, Reveal, SkeletonRow } from '../../src/components/ui/Feedback';
+import { T } from '../../src/components/T';
+import { usePalette } from '../../src/providers/theme-provider';
 import { useSession } from '../../src/providers/auth-provider';
 import { supabase } from '../../src/lib/supabase';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees } from '../../src/lib/format';
-import { T } from '../../src/components/T';
+import { radii, spacing, toneOf, typography } from '../../src/theme/tokens';
 import type { Tables } from '../../types/database';
-import { Users, Info } from 'lucide-react-native';
 
+/**
+ * Committee / BC — the rotating savings circle most Pakistani households run.
+ *
+ * Read-only on the phone for now: creating one and recording a payout writes
+ * real ledger rows, and that belongs behind the same checks the web app has.
+ */
 export default function CommitteesScreen() {
+  const palette = usePalette();
   const { householdId } = useSession();
-  const [committees, setCommittees] = useState<Tables<'committees'>[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchCommittees = async () => {
-    if (!householdId) return;
-
-    try {
+  const { data: committees = [], isLoading, error, refetch, isRefetching } = useQuery({
+    queryKey: ['committees', householdId],
+    queryFn: async (): Promise<Tables<'committees'>[]> => {
+      if (!householdId) return [];
       const { data, error } = await supabase
         .from('committees')
         .select('*')
-        .eq('household_id', householdId);
+        .eq('household_id', householdId)
+        .order('start_date', { ascending: false });
 
-      if (!error && data) {
-        setCommittees(data);
-      }
-    } catch (e) {
-      console.warn('Error fetching committees:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    fetchCommittees();
-  }, [householdId]);
-
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await fetchCommittees();
-    setRefreshing(false);
-  };
-
-  const renderCommitteeItem = ({ item }: { item: Tables<'committees'> }) => {
-    return (
-      <View style={styles.card}>
-        <View style={styles.cardHeader}>
-          <View style={styles.iconBg}>
-            <Users size={20} color={colors.light.navy900} />
-          </View>
-          <T style={styles.committeeName}>{item.name}</T>
-        </View>
-
-        <View style={styles.grid}>
-          <View style={styles.gridItem}>
-            <T style={styles.label}>Members</T>
-            <Text style={styles.valText}>{item.total_members}</Text>
-          </View>
-
-          <View style={styles.gridItem}>
-            <T style={styles.label}>Monthly Contribution</T>
-            <Text style={styles.valText}>
-              {formatRupees(item.monthly_contribution_paisa)}
-            </Text>
-          </View>
-
-          <View style={styles.gridItem}>
-            <T style={styles.label}>Payout Month</T>
-            <Text style={styles.valText}>Month {item.my_payout_month}</Text>
-          </View>
-
-          <View style={styles.gridItem}>
-            <T style={styles.label}>Status</T>
-            <T style={[styles.valText, { color: item.payout_received ? colors.light.gain : colors.light.warn }]}>
-              {item.payout_received ? 'Paid' : 'Pending'}
-            </T>
-          </View>
-        </View>
-      </View>
-    );
-  };
+      if (error) throw error;
+      return data ?? [];
+    },
+    enabled: !!householdId,
+  });
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <T style={styles.headerTitle}>Committees (BC)</T>
-      </View>
+    <Screen refreshing={isRefetching} onRefresh={refetch}>
+      <T
+        style={{
+          fontSize: typography.fontSize.xxl,
+          fontWeight: '700',
+          color: palette.foreground,
+          marginBottom: spacing.xs,
+        }}
+      >
+        Committee
+      </T>
+      <T style={{ fontSize: typography.fontSize.sm, color: palette.muted, marginBottom: spacing.xl }}>
+        Your BC circles and when your payout lands
+      </T>
 
-      <View style={styles.readOnlyBanner}>
-        <Info size={16} color={colors.light.navy900} />
-        <T style={styles.bannerText}>
-          Read-only tracker (v1). Committee management is available on Web.
-        </T>
-      </View>
+      {error ? (
+        <Card padded={false}>
+          <EmptyState
+            variant="error"
+            icon={<TriangleAlert size={26} color={palette.loss} />}
+            title="Could not load your committees"
+            body={error instanceof Error ? error.message : 'Pull down to try again.'}
+          />
+        </Card>
+      ) : isLoading ? (
+        <Card>
+          <SkeletonRow />
+          <SkeletonRow />
+        </Card>
+      ) : committees.length === 0 ? (
+        <Card padded={false}>
+          <EmptyState
+            icon={<Users size={26} color={palette.muted} />}
+            title="No committees yet"
+            body="A committee is a rotating circle — everyone pays in monthly and one member takes the pot each month. Add yours on the web app."
+          />
+        </Card>
+      ) : (
+        <View style={{ gap: spacing.md }}>
+          {committees.map((committee, i) => (
+            <Reveal key={committee.id} index={i}>
+              <CommitteeCard committee={committee} />
+            </Reveal>
+          ))}
+        </View>
+      )}
 
-      <FlatList
-        data={committees}
-        keyExtractor={(item) => item.id}
-        renderItem={renderCommitteeItem}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.brass} />
-        }
-        ListEmptyComponent={
-          !loading ? (
-            <View style={styles.emptyContainer}>
-              <T style={styles.emptyTitle}>No Committees Active</T>
-              <T style={styles.emptySub}>Committees created on Web will be displayed here.</T>
-            </View>
-          ) : null
-        }
-      />
-    </SafeAreaView>
+      <View style={{ marginTop: spacing.xxl }}>
+        <SectionHeader title="Making changes" />
+        <Card>
+          <T style={{ fontSize: typography.fontSize.sm, color: palette.muted, lineHeight: 20 }}>
+            Creating a committee and recording a payout both write real ledger rows, so they stay on
+            the web app until that path is built here.
+          </T>
+        </Card>
+      </View>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  readOnlyBanner: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.light.brassSoft,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    marginHorizontal: spacing.lg,
-    marginBottom: spacing.md,
-    borderRadius: radii.md,
-    gap: spacing.sm,
-  },
-  bannerText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.navy900,
-    flex: 1,
-  },
-  listContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  card: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: spacing.md,
-  },
-  iconBg: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.sm,
-  },
-  committeeName: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.foreground,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    rowGap: spacing.md,
-  },
-  gridItem: {
-    width: '50%',
-  },
-  label: {
-    fontSize: 11,
-    color: colors.light.muted,
-  },
-  valText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground,
-    marginTop: 2,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxxl,
-  },
-  emptyTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground2,
-  },
-  emptySub: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    marginTop: spacing.xs,
-  },
-});
+function CommitteeCard({ committee }: { committee: Tables<'committees'> }) {
+  const palette = usePalette();
+  const received = committee.payout_received;
+  const role = toneOf(palette, received ? 3 : 1);
+
+  // What the whole circle pays in over its life, from this member's seat.
+  const potPaisa = Number(committee.monthly_contribution_paisa) * committee.total_members;
+
+  return (
+    <ToneCard tone={received ? 3 : 1}>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: radii.md,
+            backgroundColor: palette.surface,
+            borderWidth: 1,
+            borderColor: role.edge,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Users size={20} color={role.ink} />
+        </View>
+
+        <View style={{ flex: 1 }}>
+          <T
+            style={{ fontSize: typography.fontSize.base, fontWeight: '700', color: palette.foreground }}
+            numberOfLines={1}
+          >
+            {committee.name}
+          </T>
+          <T style={{ fontSize: typography.fontSize.xs, color: palette.muted, marginTop: 2 }}>
+            {committee.total_members} members · your turn is month {committee.my_payout_month}
+          </T>
+        </View>
+
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 4,
+            paddingHorizontal: spacing.sm + 2,
+            paddingVertical: 4,
+            borderRadius: radii.full,
+            backgroundColor: palette.surface,
+            borderWidth: 1,
+            borderColor: role.edge,
+          }}
+        >
+          {received ? (
+            <CircleCheck size={11} color={palette.gain} />
+          ) : (
+            <Clock size={11} color={palette.warn} />
+          )}
+          <Text
+            style={{
+              fontSize: 10,
+              fontWeight: '700',
+              color: received ? palette.gain : palette.warn,
+            }}
+          >
+            {received ? 'RECEIVED' : 'WAITING'}
+          </Text>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', gap: spacing.xl, marginTop: spacing.xl }}>
+        <View style={{ flex: 1 }}>
+          <T style={{ fontSize: typography.fontSize.xs, color: palette.muted }}>Every month</T>
+          <Money paisa={committee.monthly_contribution_paisa} variant="body" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <T style={{ fontSize: typography.fontSize.xs, color: palette.muted }}>The pot</T>
+          <Money paisa={potPaisa} variant="body" compact />
+        </View>
+        <View style={{ flex: 1 }}>
+          <T style={{ fontSize: typography.fontSize.xs, color: palette.muted }}>Started</T>
+          <Numeric
+            style={{ fontSize: typography.fontSize.base, fontWeight: '600', color: palette.foreground }}
+          >
+            {committee.start_date}
+          </Numeric>
+        </View>
+      </View>
+    </ToneCard>
+  );
+}

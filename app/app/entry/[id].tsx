@@ -1,395 +1,244 @@
-import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Modal,
-  Alert,
-} from 'react-native';
+import React from 'react';
+import { Alert, ScrollView, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, Trash2, TriangleAlert } from 'lucide-react-native';
 import { supabase } from '../../src/lib/supabase';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees } from '../../src/lib/format';
-import { Button } from '../../src/components/ui/Button';
+import { Button, IconButton } from '../../src/components/ui/Button';
+import { Card } from '../../src/components/ui/Surfaces';
+import { Money, Numeric } from '../../src/components/ui/Money';
+import { CategoryGlyph } from '../../src/components/ui/CategoryGlyph';
+import { EmptyState, Skeleton } from '../../src/components/ui/Feedback';
 import { T } from '../../src/components/T';
-import { useDeleteQuickEntry } from '../../src/hooks/use-entries';
+import { usePalette } from '../../src/providers/theme-provider';
+import { useSession } from '../../src/providers/auth-provider';
+import { useDeleteEntry } from '../../src/hooks/use-entries';
+import { categoryLabel, ACCOUNT_TYPE_LABEL, PAYMENT_METHOD_LABEL } from '../../src/lib/ledger';
+import { spacing, typography } from '../../src/theme/tokens';
 import type { Tables } from '../../types/database';
-import { ArrowLeft, Trash2, Link as LinkIcon, AlertTriangle } from 'lucide-react-native';
 
+/**
+ * One movement, in full.
+ *
+ * There is ONE row. The old version of this screen offered "also delete the
+ * linked transaction?" because entries and transactions were two tables held
+ * together by an optional link — every gap between the copies was a bug, which
+ * is why they were merged. Deleting here deletes the movement, full stop.
+ */
 export default function EntryDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const router = useRouter();
-  const deleteEntryMutation = useDeleteQuickEntry();
+  const palette = usePalette();
+  const insets = useSafeAreaInsets();
+  const { profile } = useSession();
+  const locale = profile?.locale ?? 'en';
+  const deleteEntry = useDeleteEntry();
 
-  const [entry, setEntry] = useState<Tables<'quick_entries'> | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  // Delete modal state (MOBILE-PLAN.md §10)
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [deleteLinked, setDeleteLinked] = useState(true);
-
-  const fetchEntry = async () => {
-    if (!id) return;
-    try {
+  const { data: entry, isLoading, error } = useQuery({
+    queryKey: ['entry', id],
+    queryFn: async () => {
+      if (!id) return null;
+      // The embed NAMES its foreign key — `transactions` reaches `accounts`
+      // through both `account_id` and `transfer_account_id`, and an unqualified
+      // `accounts(*)` answers PGRST201 with no rows at all.
       const { data, error } = await supabase
-        .from('quick_entries')
-        .select('*')
+        .from('transactions')
+        .select(
+          `*,
+           account:accounts!transactions_account_id_fkey(id, name, type, deleted_at),
+           category:categories(id, name, name_ur, icon, tone, art_path)`,
+        )
         .eq('id', id)
         .single();
 
-      if (!error && data) {
-        setEntry(data);
-      }
-    } catch (e) {
-      console.warn('Error fetching entry detail:', e);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (error) throw error;
+      return data as unknown as Tables<'transactions'> & {
+        account: Pick<Tables<'accounts'>, 'id' | 'name' | 'type' | 'deleted_at'> | null;
+        category: Pick<
+          Tables<'categories'>,
+          'id' | 'name' | 'name_ur' | 'icon' | 'tone' | 'art_path'
+        > | null;
+      };
+    },
+    enabled: !!id,
+  });
 
-  useEffect(() => {
-    fetchEntry();
-  }, [id]);
-
-  const handleDelete = async () => {
+  const confirmDelete = () => {
     if (!entry) return;
-
-    try {
-      await deleteEntryMutation.mutateAsync({
-        entryId: entry.id,
-        linkedTransactionId: entry.linked_transaction_id,
-        deleteLinked,
-      });
-
-      setShowDeleteModal(false);
-      router.back();
-    } catch (e: any) {
-      Alert.alert('Error', e.message || 'Failed to delete entry');
-    }
-  };
-
-  if (loading || !entry) {
-    return (
-      <SafeAreaView style={styles.container}>
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-            <ArrowLeft size={20} color={colors.light.foreground} />
-          </TouchableOpacity>
-        </View>
-        <View style={styles.centerContent}>
-          <T style={styles.loadingText}>Loading entry...</T>
-        </View>
-      </SafeAreaView>
+    Alert.alert(
+      'Delete this entry?',
+      'The account balance moves back by the same amount. This cannot be undone.',
+      [
+        { text: 'Keep it', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () =>
+            deleteEntry.mutate(
+              { id: entry.id, type: entry.type },
+              {
+                onSuccess: () => router.back(),
+                onError: (err) =>
+                  Alert.alert(
+                    'Could not delete',
+                    err instanceof Error ? err.message : 'Please try again.',
+                  ),
+              },
+            ),
+        },
+      ],
     );
-  }
-
-  const isIncome = entry.type === 'income';
+  };
 
   return (
-    <SafeAreaView style={styles.container}>
-      {/* Header */}
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <ArrowLeft size={20} color={colors.light.foreground} />
-        </TouchableOpacity>
-
-        <T style={styles.headerTitle}>Entry Details</T>
-
-        <View style={styles.headerActions}>
-          <TouchableOpacity
-            style={styles.deleteIconBtn}
-            onPress={() => setShowDeleteModal(true)}
-          >
-            <Trash2 size={18} color={colors.light.loss} />
-          </TouchableOpacity>
-        </View>
+    <View style={{ flex: 1, backgroundColor: palette.canvas }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: spacing.lg,
+          paddingTop: insets.top + spacing.sm,
+          paddingBottom: spacing.md,
+        }}
+      >
+        <IconButton accessibilityLabel="Back" onPress={() => router.back()}>
+          <ArrowLeft size={19} color={palette.foreground2} />
+        </IconButton>
+        <T style={{ fontSize: typography.fontSize.lg, fontWeight: '700', color: palette.foreground }}>
+          Entry
+        </T>
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* Main Amount Display */}
-        <View style={styles.amountCard}>
-          <T style={styles.typeLabel}>{isIncome ? 'INCOME' : 'EXPENSE'}</T>
-          <Text
-            style={[
-              styles.amountText,
-              { color: isIncome ? colors.light.gain : colors.light.foreground },
-            ]}
-          >
-            {isIncome ? '+' : '-'}{formatRupees(entry.amount_paisa)}
-          </Text>
-          <T style={styles.dateText}>{entry.entry_date}</T>
-        </View>
-
-        {/* Info List */}
-        <View style={styles.detailsCard}>
-          <View style={styles.detailRow}>
-            <T style={styles.detailLabel}>Category</T>
-            <T style={styles.detailVal}>{entry.category}</T>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.detailRow}>
-            <T style={styles.detailLabel}>Note / Description</T>
-            <T style={styles.detailVal}>{entry.note || 'None'}</T>
-          </View>
-
-          <View style={styles.divider} />
-
-          <View style={styles.detailRow}>
-            <T style={styles.detailLabel}>Linked Transaction</T>
-            <View style={styles.linkStatusRow}>
-              {entry.linked_transaction_id ? (
-                <>
-                  <LinkIcon size={14} color={colors.light.brassStrong} />
-                  <T style={styles.linkedYes}>Linked to Ledger</T>
-                </>
-              ) : (
-                <T style={styles.linkedNo}>Standalone Log</T>
-              )}
-            </View>
-          </View>
-        </View>
-      </ScrollView>
-
-      {/* Delete Confirmation Modal (MOBILE-PLAN.md §10) */}
-      <Modal
-        visible={showDeleteModal}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowDeleteModal(false)}
+      <ScrollView
+        contentContainerStyle={{
+          paddingHorizontal: spacing.lg,
+          paddingBottom: insets.bottom + spacing.xxxl,
+          gap: spacing.lg,
+        }}
+        showsVerticalScrollIndicator={false}
       >
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <View style={styles.modalIconBg}>
-              <AlertTriangle size={24} color={colors.light.loss} />
-            </View>
-
-            <T style={styles.modalTitle}>Delete Entry?</T>
-            <T style={styles.modalSub}>
-              "{entry.category} - {formatRupees(entry.amount_paisa)}" on {entry.entry_date}.
-            </T>
-
-            {entry.linked_transaction_id && (
-              <TouchableOpacity
-                style={styles.checkboxRow}
-                onPress={() => setDeleteLinked(!deleteLinked)}
-                activeOpacity={0.8}
+        {error ? (
+          <Card padded={false}>
+            <EmptyState
+              variant="error"
+              icon={<TriangleAlert size={26} color={palette.loss} />}
+              title="Could not load this entry"
+              body={error instanceof Error ? error.message : undefined}
+            />
+          </Card>
+        ) : isLoading || !entry ? (
+          <Card style={{ gap: spacing.md }}>
+            <Skeleton width="50%" height={36} />
+            <Skeleton width="70%" height={16} />
+            <Skeleton width="40%" height={16} />
+          </Card>
+        ) : (
+          <>
+            <Card style={{ alignItems: 'center', gap: spacing.md, paddingVertical: spacing.xxxl }}>
+              <CategoryGlyph
+                icon={entry.category?.icon}
+                tone={entry.category?.tone}
+                artPath={entry.category?.art_path}
+                size={64}
+              />
+              <T
+                style={{
+                  fontSize: typography.fontSize.lg,
+                  fontWeight: '700',
+                  color: palette.foreground,
+                }}
               >
-                <View style={[styles.checkbox, deleteLinked ? styles.checkboxActive : undefined]}>
-                  {deleteLinked && <Text style={styles.checkmark}>✓</Text>}
-                </View>
-                <T style={styles.checkboxLabel}>Also delete linked bank transaction</T>
-              </TouchableOpacity>
-            )}
+                {entry.category ? categoryLabel(entry.category as never, locale) : 'Uncategorised'}
+              </T>
+              {/* Coloured by the SIGN, never by `type`. */}
+              <Money paisa={entry.amount_paisa} variant="hero" signed showPlus decimals />
+            </Card>
 
-            <View style={styles.modalActions}>
-              <Button
-                title="Cancel"
-                variant="outline"
-                onPress={() => setShowDeleteModal(false)}
-                style={{ flex: 1 }}
+            <Card padded={false}>
+              <Detail label="Date" value={entry.date} numeric />
+              <Detail
+                label="Account"
+                value={
+                  entry.account
+                    ? entry.account.deleted_at
+                      ? `${entry.account.name} · Deleted`
+                      : `${entry.account.name} · ${ACCOUNT_TYPE_LABEL[entry.account.type] ?? entry.account.type}`
+                    : '—'
+                }
               />
-              <Button
-                title="Delete"
-                variant="danger"
-                onPress={handleDelete}
-                loading={deleteEntryMutation.isPending}
-                style={{ flex: 1 }}
-              />
-            </View>
-          </View>
-        </View>
-      </Modal>
-    </SafeAreaView>
+              {entry.payment_method ? (
+                <Detail
+                  label="Method"
+                  value={PAYMENT_METHOD_LABEL[entry.payment_method] ?? entry.payment_method}
+                />
+              ) : null}
+              <Detail label="Note" value={entry.note || '—'} last />
+            </Card>
+
+            <Button
+              block
+              variant="danger"
+              title="Delete entry"
+              icon={<Trash2 size={18} color="#FFFFFF" />}
+              loading={deleteEntry.isPending}
+              onPress={confirmDelete}
+            />
+          </>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  headerActions: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  deleteIconBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.lossSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  centerContent: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  loadingText: {
-    color: colors.light.muted,
-  },
-  content: {
-    padding: spacing.lg,
-  },
-  amountCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.xxl,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    marginBottom: spacing.lg,
-  },
-  typeLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    fontWeight: typography.fontWeight.bold,
-    letterSpacing: 1,
-  },
-  amountText: {
-    fontSize: 36,
-    fontWeight: typography.fontWeight.bold,
-    marginVertical: spacing.sm,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  dateText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.faint,
-  },
-  detailsCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  detailRow: {
-    paddingVertical: spacing.sm,
-  },
-  detailLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginBottom: 2,
-  },
-  detailVal: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground,
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.light.border,
-    marginVertical: spacing.xs,
-  },
-  linkStatusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.xs,
-    marginTop: 2,
-  },
-  linkedYes: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.brassStrong,
-    fontWeight: typography.fontWeight.semibold,
-  },
-  linkedNo: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-  },
-
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(11, 26, 51, 0.5)',
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  modalCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.modal,
-    padding: spacing.xl,
-    alignItems: 'center',
-  },
-  modalIconBg: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.light.lossSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  modalTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  modalSub: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    marginBottom: spacing.lg,
-  },
-  checkboxRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    marginBottom: spacing.xl,
-  },
-  checkbox: {
-    width: 20,
-    height: 20,
-    borderRadius: 4,
-    borderWidth: 2,
-    borderColor: colors.light.borderStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxActive: {
-    backgroundColor: colors.light.loss,
-    borderColor: colors.light.loss,
-  },
-  checkmark: {
-    color: '#FFFFFF',
-    fontSize: 11,
-    fontWeight: 'bold',
-  },
-  checkboxLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.foreground,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    width: '100%',
-  },
-});
+function Detail({
+  label,
+  value,
+  numeric,
+  last,
+}: {
+  label: string;
+  value: string;
+  numeric?: boolean;
+  last?: boolean;
+}) {
+  const palette = usePalette();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: spacing.lg,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.lg,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: palette.border,
+      }}
+    >
+      <T style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>{label}</T>
+      {numeric ? (
+        <Numeric
+          style={{ fontSize: typography.fontSize.base, fontWeight: '600', color: palette.foreground }}
+        >
+          {value}
+        </Numeric>
+      ) : (
+        <T
+          style={{
+            fontSize: typography.fontSize.base,
+            fontWeight: '600',
+            color: palette.foreground,
+            flexShrink: 1,
+            textAlign: 'right',
+          }}
+          numberOfLines={2}
+        >
+          {value}
+        </T>
+      )}
+    </View>
+  );
+}

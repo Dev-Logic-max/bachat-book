@@ -1,111 +1,118 @@
 import React, { useState } from 'react';
 import {
-  View,
-  TextInput,
+  Pressable,
   Text,
-  StyleSheet,
-  TextInputProps,
-  TouchableOpacity,
-  ViewStyle,
+  TextInput,
+  View,
+  type StyleProp,
+  type TextInputProps,
+  type TextStyle,
+  type ViewStyle,
 } from 'react-native';
-import { colors, radii, spacing, typography } from '../../theme/tokens';
 import { Eye, EyeOff } from 'lucide-react-native';
+import { usePalette } from '../../providers/theme-provider';
+import { NUMERIC } from './Money';
+import { radii, spacing, typography } from '../../theme/tokens';
+import { T } from '../T';
 
 interface InputProps extends TextInputProps {
   label?: string;
   error?: string;
+  hint?: string;
   isPassword?: boolean;
-  containerStyle?: ViewStyle;
+  /** Leading affordance — a currency symbol, a search glass. */
+  prefix?: React.ReactNode;
+  /** Forces LTR + tabular figures. On for anything numeric. */
+  numeric?: boolean;
+  containerStyle?: StyleProp<ViewStyle>;
 }
 
 export function Input({
   label,
   error,
+  hint,
   isPassword = false,
+  prefix,
+  numeric = false,
   containerStyle,
   style,
   secureTextEntry,
   ...props
 }: InputProps) {
+  const palette = usePalette();
   const [showPassword, setShowPassword] = useState(false);
-  const [isFocused, setIsFocused] = useState(false);
+  const [focused, setFocused] = useState(false);
 
   const isSecure = isPassword ? !showPassword : secureTextEntry;
+  const borderColor = error ? palette.loss : focused ? palette.brass : palette.border;
 
   return (
-    <View style={[styles.container, containerStyle]}>
-      {label && <Text style={styles.label}>{label}</Text>}
+    <View style={[{ gap: spacing.sm }, containerStyle]}>
+      {label ? (
+        <T
+          style={{
+            fontSize: typography.fontSize.sm,
+            fontWeight: '600',
+            color: palette.foreground2,
+          }}
+        >
+          {label}
+        </T>
+      ) : null}
+
       <View
-        style={[
-          styles.inputWrapper,
-          isFocused && styles.inputFocused,
-          !!error && styles.inputError,
-        ]}
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: spacing.sm,
+          backgroundColor: palette.surface,
+          borderWidth: focused || error ? 1.5 : 1,
+          borderColor,
+          borderRadius: radii.control,
+          paddingHorizontal: spacing.lg,
+        }}
       >
+        {prefix}
         <TextInput
-          style={[styles.input, style]}
-          placeholderTextColor={colors.light.faint}
+          style={[
+            {
+              flex: 1,
+              height: 52,
+              fontSize: typography.fontSize.base,
+              color: palette.foreground,
+            } as TextStyle,
+            // Urdu bidi would otherwise push a leading minus to the trailing
+            // edge inside the field itself, not just when rendering it back.
+            numeric ? NUMERIC : null,
+            style,
+          ]}
+          placeholderTextColor={palette.faint}
           secureTextEntry={isSecure}
-          onFocus={() => setIsFocused(true)}
-          onBlur={() => setIsFocused(false)}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           {...props}
         />
-        {isPassword && (
-          <TouchableOpacity
-            style={styles.eyeIcon}
-            onPress={() => setShowPassword(!showPassword)}
-            activeOpacity={0.7}
+        {isPassword ? (
+          <Pressable
+            onPress={() => setShowPassword((v) => !v)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
           >
             {showPassword ? (
-              <EyeOff size={20} color={colors.light.muted} />
+              <EyeOff size={20} color={palette.muted} />
             ) : (
-              <Eye size={20} color={colors.light.muted} />
+              <Eye size={20} color={palette.muted} />
             )}
-          </TouchableOpacity>
-        )}
+          </Pressable>
+        ) : null}
       </View>
-      {error && <Text style={styles.errorText}>{error}</Text>}
+
+      {error ? (
+        <Text style={{ fontSize: typography.fontSize.xs, color: palette.loss }}>{error}</Text>
+      ) : hint ? (
+        <T style={{ fontSize: typography.fontSize.xs, color: palette.muted }}>{hint}</T>
+      ) : null}
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    marginBottom: spacing.md,
-  },
-  label: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.light.foreground2,
-    marginBottom: spacing.xs,
-  },
-  inputWrapper: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.light.surface,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    borderRadius: radii.md,
-    paddingHorizontal: spacing.md,
-  },
-  inputFocused: {
-    borderColor: colors.light.brass,
-  },
-  inputError: {
-    borderColor: colors.light.loss,
-  },
-  input: {
-    flex: 1,
-    height: 48,
-    fontSize: typography.fontSize.base,
-    color: colors.light.foreground,
-  },
-  eyeIcon: {
-    padding: spacing.xs,
-  },
-  errorText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.loss,
-    marginTop: spacing.xs,
-  },
-});

@@ -1,41 +1,45 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
   KeyboardAvoidingView,
-  Platform,
-  ScrollView,
   Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View,
 } from 'react-native';
 import { useRouter } from 'expo-router';
+import { StatusBar } from 'expo-status-bar';
+import { Shield } from 'lucide-react-native';
 import { supabase } from '../../src/lib/supabase';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
 import { Input } from '../../src/components/ui/Input';
 import { Button } from '../../src/components/ui/Button';
+import { Card } from '../../src/components/ui/Surfaces';
 import { T } from '../../src/components/T';
+import { usePalette, useTheme } from '../../src/providers/theme-provider';
+import { elevation } from '../../src/theme/use-styles';
+import { radii, spacing, typography } from '../../src/theme/tokens';
 import {
-  incrementSignInCount,
   checkBiometricHardware,
+  incrementSignInCount,
   isBiometricEnabled,
   setBiometricEnabled,
 } from '../../src/lib/biometrics';
-import { Shield } from 'lucide-react-native';
 
 export default function SignInScreen() {
   const router = useRouter();
+  const palette = usePalette();
+  const { isDark } = useTheme();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
-
-  // Biometric prompt modal (after 2nd sign-in)
   const [showBiometricModal, setShowBiometricModal] = useState(false);
 
   const handleSignIn = async () => {
     if (!email.trim() || !password) {
-      setErrorMsg('Please enter email and password');
+      setErrorMsg('Enter your email and password to continue.');
       return;
     }
 
@@ -43,7 +47,7 @@ export default function SignInScreen() {
     setLoading(true);
 
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error } = await supabase.auth.signInWithPassword({
         email: email.trim(),
         password,
       });
@@ -54,25 +58,26 @@ export default function SignInScreen() {
         return;
       }
 
-      // Check sign-in count for biometric prompt (MOBILE-PLAN.md §1 & §11)
+      // Offer the biometric lock on the SECOND sign-in, not the first. Asking
+      // before the user has seen anything is a permission prompt with no context
+      // attached, and it gets declined.
       const count = await incrementSignInCount();
       const alreadyEnabled = await isBiometricEnabled();
       const { hasHardware, isEnrolled } = await checkBiometricHardware();
 
+      setLoading(false);
       if (count >= 2 && !alreadyEnabled && hasHardware && isEnrolled) {
-        setLoading(false);
         setShowBiometricModal(true);
       } else {
-        setLoading(false);
         router.replace('/(tabs)');
       }
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Failed to sign in');
+    } catch (e) {
+      setErrorMsg(e instanceof Error ? e.message : 'Could not sign in. Please try again.');
       setLoading(false);
     }
   };
 
-  const handleEnableBiometrics = async (enable: boolean) => {
+  const resolveBiometrics = async (enable: boolean) => {
     await setBiometricEnabled(enable);
     setShowBiometricModal(false);
     router.replace('/(tabs)');
@@ -80,34 +85,85 @@ export default function SignInScreen() {
 
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={{ flex: 1, backgroundColor: palette.canvas }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent}>
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoText}>BB</Text>
+      <StatusBar style={isDark ? 'light' : 'dark'} />
+
+      <ScrollView
+        contentContainerStyle={{
+          flexGrow: 1,
+          justifyContent: 'center',
+          padding: spacing.xl,
+        }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={{ alignItems: 'center', marginBottom: spacing.xxxl }}>
+          <View
+            style={[
+              {
+                width: 64,
+                height: 64,
+                borderRadius: radii.lg,
+                backgroundColor: palette.navy900,
+                alignItems: 'center',
+                justifyContent: 'center',
+                marginBottom: spacing.lg,
+              },
+              elevation(palette, 'md'),
+            ]}
+          >
+            <Text style={{ color: palette.brass, fontSize: 25, fontWeight: '800' }}>BB</Text>
           </View>
-          <T style={styles.title}>Bachat Book</T>
-          <T style={styles.subtitle}>Personal & Household Finance</T>
+          <T
+            style={{
+              fontSize: typography.fontSize.xxl,
+              fontWeight: '700',
+              color: palette.foreground,
+            }}
+          >
+            Bachat Book
+          </T>
+          <T
+            style={{ fontSize: typography.fontSize.sm, color: palette.muted, marginTop: 4 }}
+          >
+            Your money, your household, one book
+          </T>
         </View>
 
-        {/* Card Form */}
-        <View style={styles.formCard}>
-          <T style={styles.formTitle}>Sign In</T>
+        <Card style={{ gap: spacing.lg }}>
+          <T
+            style={{
+              fontSize: typography.fontSize.xl,
+              fontWeight: '700',
+              color: palette.foreground,
+            }}
+          >
+            Sign in
+          </T>
 
-          {!!errorMsg && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorBoxText}>{errorMsg}</Text>
+          {errorMsg ? (
+            <View
+              style={{
+                backgroundColor: palette.lossSoft,
+                borderRadius: radii.sm,
+                borderWidth: 1,
+                borderColor: palette.loss,
+                padding: spacing.md,
+              }}
+            >
+              <Text style={{ color: palette.loss, fontSize: typography.fontSize.sm }}>
+                {errorMsg}
+              </Text>
             </View>
-          )}
+          ) : null}
 
           <Input
-            label="Email Address"
+            label="Email"
             placeholder="name@domain.com"
             keyboardType="email-address"
             autoCapitalize="none"
+            autoComplete="email"
             value={email}
             onChangeText={setEmail}
           />
@@ -116,184 +172,91 @@ export default function SignInScreen() {
             label="Password"
             placeholder="••••••••"
             isPassword
+            autoComplete="current-password"
             value={password}
             onChangeText={setPassword}
           />
 
-          <TouchableOpacity
-            style={styles.forgotBtn}
+          <Pressable
             onPress={() => router.push('/(auth)/forgot-password')}
+            style={{ alignSelf: 'flex-end' }}
+            hitSlop={8}
           >
-            <T style={styles.forgotText}>Forgot Password?</T>
-          </TouchableOpacity>
-
-          <Button
-            title="Sign In"
-            onPress={handleSignIn}
-            loading={loading}
-            style={styles.submitBtn}
-          />
-        </View>
-
-        {/* Footer Link */}
-        <View style={styles.footer}>
-          <TouchableOpacity onPress={() => router.push('/(auth)/sign-up')}>
-            <T style={styles.footerText}>
-              Don't have an account? <Text style={styles.footerLink}>Sign up</Text>
+            <T
+              style={{
+                fontSize: typography.fontSize.sm,
+                color: palette.brassStrong,
+                fontWeight: '600',
+              }}
+            >
+              Forgot password?
             </T>
-          </TouchableOpacity>
-        </View>
+          </Pressable>
+
+          <Button block size="lg" title="Sign in" onPress={handleSignIn} loading={loading} />
+        </Card>
+
+        <Pressable
+          onPress={() => router.push('/(auth)/sign-up')}
+          style={{ alignItems: 'center', marginTop: spacing.xxl }}
+          hitSlop={8}
+        >
+          <T style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>
+            New here?{' '}
+            <Text style={{ color: palette.brassStrong, fontWeight: '600' }}>Create an account</Text>
+          </T>
+        </Pressable>
       </ScrollView>
 
-      {/* Biometric Opt-in Modal (after 2nd sign-in) */}
       <Modal visible={showBiometricModal} transparent animationType="fade">
-        <View style={styles.modalOverlay}>
-          <View style={styles.modalCard}>
-            <Shield size={44} color={colors.light.brass} />
-            <T style={styles.modalTitle}>Enable Biometric Lock?</T>
-            <T style={styles.modalSub}>
-              Use Fingerprint or Face ID for faster, secure app unlocks.
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: palette.scrim,
+            justifyContent: 'center',
+            padding: spacing.xl,
+          }}
+        >
+          <Card style={{ alignItems: 'center', gap: spacing.md }}>
+            <Shield size={44} color={palette.brass} />
+            <T
+              style={{
+                fontSize: typography.fontSize.xl,
+                fontWeight: '700',
+                color: palette.foreground,
+              }}
+            >
+              Lock the app?
+            </T>
+            <T
+              style={{
+                fontSize: typography.fontSize.sm,
+                color: palette.muted,
+                textAlign: 'center',
+                lineHeight: 20,
+              }}
+            >
+              Use your fingerprint or face to open Bachat Book. Worth turning on if this phone is
+              shared with family.
             </T>
 
-            <View style={styles.modalActions}>
+            <View style={{ flexDirection: 'row', gap: spacing.md, width: '100%', marginTop: spacing.sm }}>
               <Button
-                title="Not Now"
+                title="Not now"
                 variant="outline"
-                onPress={() => handleEnableBiometrics(false)}
+                onPress={() => resolveBiometrics(false)}
                 style={{ flex: 1 }}
               />
               <Button
-                title="Enable"
+                title="Turn on"
                 variant="brass"
-                onPress={() => handleEnableBiometrics(true)}
+                onPress={() => resolveBiometrics(true)}
                 style={{ flex: 1 }}
               />
             </View>
-          </View>
+          </Card>
         </View>
       </Modal>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  scrollContent: {
-    flexGrow: 1,
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  header: {
-    alignItems: 'center',
-    marginBottom: spacing.xxl,
-  },
-  logoBadge: {
-    width: 60,
-    height: 60,
-    borderRadius: radii.lg,
-    backgroundColor: colors.light.navy900,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-  },
-  logoText: {
-    color: colors.light.brass,
-    fontSize: 24,
-    fontWeight: typography.fontWeight.bold,
-  },
-  title: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  subtitle: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    marginTop: 4,
-  },
-  formCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.xl,
-    elevation: 3,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.08,
-    shadowRadius: 12,
-  },
-  formTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.foreground,
-    marginBottom: spacing.lg,
-  },
-  errorBox: {
-    backgroundColor: colors.light.lossSoft,
-    borderRadius: radii.sm,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  errorBoxText: {
-    color: colors.light.loss,
-    fontSize: typography.fontSize.sm,
-  },
-  forgotBtn: {
-    alignSelf: 'flex-end',
-    marginBottom: spacing.lg,
-  },
-  forgotText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.brassStrong,
-    fontWeight: typography.fontWeight.medium,
-  },
-  submitBtn: {
-    marginTop: spacing.xs,
-  },
-  footer: {
-    alignItems: 'center',
-    marginTop: spacing.xxl,
-  },
-  footerText: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-  },
-  footerLink: {
-    color: colors.light.brassStrong,
-    fontWeight: typography.fontWeight.semibold,
-  },
-
-  // Modal styles
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(11, 26, 51, 0.6)',
-    justifyContent: 'center',
-    padding: spacing.xl,
-  },
-  modalCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.modal,
-    padding: spacing.xl,
-    alignItems: 'center',
-  },
-  modalTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-    marginTop: spacing.md,
-  },
-  modalSub: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    marginBottom: spacing.xl,
-  },
-  modalActions: {
-    flexDirection: 'row',
-    gap: spacing.md,
-    width: '100%',
-  },
-});

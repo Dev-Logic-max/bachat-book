@@ -1,66 +1,45 @@
 import React from 'react';
-import { View, StyleSheet, ScrollView } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
+import { CalendarDays } from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card } from '../../src/components/ui/Surfaces';
+import { EmptyState } from '../../src/components/ui/Feedback';
 import { T } from '../../src/components/T';
-import { Calendar as CalendarIcon } from 'lucide-react-native';
+import { usePalette } from '../../src/providers/theme-provider';
+import { spacing, typography } from '../../src/theme/tokens';
 
+/**
+ * Placeholder, and deliberately honest about it.
+ *
+ * The calendar is M6 — it needs task generation, the Hijri overlay and
+ * complete-with-payment before it shows anything true. A grid of empty day cells
+ * would look finished and be a lie about what the app can currently do.
+ */
 export default function CalendarScreen() {
-  return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <T style={styles.headerTitle}>Financial Calendar</T>
-      </View>
+  const palette = usePalette();
 
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.emptyCard}>
-          <CalendarIcon size={48} color={colors.light.brass} />
-          <T style={styles.emptyTitle}>Calendar Events</T>
-          <T style={styles.emptySub}>
-            Recurring bills, committee payouts, and salary events will render on this heat-map calendar.
-          </T>
-        </View>
-      </ScrollView>
-    </SafeAreaView>
+  return (
+    <Screen>
+      <T
+        style={{
+          fontSize: typography.fontSize.xxl,
+          fontWeight: '700',
+          color: palette.foreground,
+          marginBottom: spacing.xs,
+        }}
+      >
+        Calendar
+      </T>
+      <T style={{ fontSize: typography.fontSize.sm, color: palette.muted, marginBottom: spacing.xl }}>
+        Everything with a date on it
+      </T>
+
+      <Card padded={false}>
+        <EmptyState
+          icon={<CalendarDays size={26} color={palette.brassStrong} />}
+          title="Not on the phone yet"
+          body="Bills, committee payouts, salary dates and the Ramadan and Eid shifts are on the web app for now. They arrive here once tasks and reminders land."
+        />
+      </Card>
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  content: {
-    padding: spacing.lg,
-  },
-  emptyCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.xxl,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  emptyTitle: {
-    fontSize: typography.fontSize.xl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-    marginTop: spacing.md,
-  },
-  emptySub: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    textAlign: 'center',
-    marginTop: spacing.xs,
-    lineHeight: 20,
-  },
-});

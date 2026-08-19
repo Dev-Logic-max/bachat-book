@@ -1,215 +1,166 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
-} from 'react-native';
+import React from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees } from '../../src/lib/format';
+import { ArrowLeftRight, Inbox, TriangleAlert } from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card } from '../../src/components/ui/Surfaces';
+import { Money, Numeric } from '../../src/components/ui/Money';
+import { CategoryGlyph } from '../../src/components/ui/CategoryGlyph';
+import { EmptyState, SkeletonRow } from '../../src/components/ui/Feedback';
 import { T } from '../../src/components/T';
-import { useQuickEntries } from '../../src/hooks/use-entries';
-import type { Tables } from '../../types/database';
-import { Plus, ArrowDownLeft, ArrowUpRight, Link as LinkIcon } from 'lucide-react-native';
+import { usePalette } from '../../src/providers/theme-provider';
+import { useSession } from '../../src/providers/auth-provider';
+import { useTransactions, type MovementRow } from '../../src/hooks/use-transactions';
+import { categoryLabel } from '../../src/lib/ledger';
+import { radii, spacing, typography } from '../../src/theme/tokens';
 
-export default function EntriesScreen() {
+export default function TransactionsScreen() {
+  const palette = usePalette();
   const router = useRouter();
-  const { data: entries = [], isLoading, refetch } = useQuickEntries();
-  const [refreshing, setRefreshing] = useState(false);
+  const { profile } = useSession();
+  const locale = profile?.locale ?? 'en';
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  };
-
-  const renderEntryItem = ({ item }: { item: Tables<'quick_entries'> }) => {
-    const isIncome = item.type === 'income';
-
-    return (
-      <TouchableOpacity
-        style={styles.entryRow}
-        onPress={() => router.push(`/entry/${item.id}`)}
-        activeOpacity={0.7}
-      >
-        <View
-          style={[
-            styles.iconBadge,
-            { backgroundColor: isIncome ? colors.light.gainSoft : colors.light.lossSoft },
-          ]}
-        >
-          {isIncome ? (
-            <ArrowDownLeft size={20} color={colors.light.gain} />
-          ) : (
-            <ArrowUpRight size={20} color={colors.light.loss} />
-          )}
-        </View>
-
-        <View style={styles.entryDetails}>
-          <T style={styles.entryCategory}>{item.category || (isIncome ? 'Income' : 'Expense')}</T>
-          <T style={styles.entrySub}>
-            {item.entry_date} {item.note ? `• ${item.note}` : ''}
-          </T>
-        </View>
-
-        <View style={styles.amountCol}>
-          <Text
-            style={[
-              styles.amountText,
-              { color: isIncome ? colors.light.gain : colors.light.foreground },
-            ]}
-          >
-            {isIncome ? '+' : '-'}{formatRupees(item.amount_paisa)}
-          </Text>
-          {item.linked_transaction_id && (
-            <View style={styles.linkedBadge}>
-              <LinkIcon size={12} color={colors.light.brassStrong} />
-              <Text style={styles.linkedText}>Linked</Text>
-            </View>
-          )}
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const { data: rows = [], isLoading, error, refetch, isRefetching } = useTransactions();
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      {/* Screen Header */}
-      <View style={styles.header}>
-        <T style={styles.headerTitle}>Daily Entries</T>
-        <TouchableOpacity
-          style={styles.addBtn}
-          onPress={() => router.push('/entry/new')}
-          activeOpacity={0.8}
-        >
-          <Plus size={18} color={colors.light.onNavy} />
-          <T style={styles.addBtnText}>New Entry</T>
-        </TouchableOpacity>
-      </View>
+    <Screen refreshing={isRefetching} onRefresh={refetch}>
+      <T
+        style={{
+          fontSize: typography.fontSize.xxl,
+          fontWeight: '700',
+          color: palette.foreground,
+          marginBottom: spacing.xs,
+        }}
+      >
+        Transactions
+      </T>
+      <T style={{ fontSize: typography.fontSize.sm, color: palette.muted, marginBottom: spacing.xl }}>
+        Money that touched a bank or wallet, and transfers between your accounts
+      </T>
 
-      <FlatList
-        data={entries}
-        keyExtractor={(item) => item.id}
-        renderItem={renderEntryItem}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.brass} />
-        }
-        ListEmptyComponent={
-          !isLoading ? (
-            <View style={styles.emptyContainer}>
-              <T style={styles.emptyTitle}>No Entries Found</T>
-              <T style={styles.emptySub}>Tap 'New Entry' to add your first quick log.</T>
-            </View>
-          ) : null
-        }
-      />
-    </SafeAreaView>
+      <Card padded={false}>
+        {error ? (
+          // Surfaced separately from "no rows" on purpose. This exact query is
+          // the one that failed with PGRST201 on web and rendered as an empty
+          // state for every household.
+          <EmptyState
+            variant="error"
+            icon={<TriangleAlert size={26} color={palette.loss} />}
+            title="Could not load transactions"
+            body={error instanceof Error ? error.message : 'Pull down to try again.'}
+          />
+        ) : isLoading ? (
+          <View style={{ paddingHorizontal: spacing.xl }}>
+            <SkeletonRow />
+            <SkeletonRow />
+            <SkeletonRow />
+          </View>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            icon={<Inbox size={26} color={palette.muted} />}
+            title="No bank or wallet activity yet"
+            body="Cash spending lives on Entries. Anything through a bank account, a mobile wallet, or a transfer shows up here."
+          />
+        ) : (
+          rows.map((row, i) => (
+            <MovementRowItem
+              key={row.id}
+              row={row}
+              locale={locale}
+              last={i === rows.length - 1}
+              onPress={() => router.push(`/entry/${row.id}` as never)}
+            />
+          ))
+        )}
+      </Card>
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  addBtn: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.light.navy900,
-    borderRadius: radii.full,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    gap: spacing.xs,
-  },
-  addBtnText: {
-    color: colors.light.onNavy,
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.semibold,
-  },
-  listContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  entryRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.md,
-    marginBottom: spacing.sm,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-  },
-  iconBadge: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: spacing.md,
-  },
-  entryDetails: {
-    flex: 1,
-  },
-  entryCategory: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground,
-  },
-  entrySub: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 2,
-  },
-  amountCol: {
-    alignItems: 'flex-end',
-  },
-  amountText: {
-    fontSize: typography.fontSize.base,
-    fontWeight: typography.fontWeight.bold,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  linkedBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    marginTop: 2,
-  },
-  linkedText: {
-    fontSize: 10,
-    color: colors.light.brassStrong,
-    fontWeight: typography.fontWeight.medium,
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxxl,
-  },
-  emptyTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground2,
-  },
-  emptySub: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    marginTop: spacing.xs,
-  },
-});
+function MovementRowItem({
+  row,
+  locale,
+  last,
+  onPress,
+}: {
+  row: MovementRow;
+  locale: string;
+  last?: boolean;
+  onPress: () => void;
+}) {
+  const palette = usePalette();
+  const isTransfer = row.type === 'transfer';
+
+  const title = isTransfer
+    ? `${row.account?.name ?? '—'} → ${row.transfer_account?.name ?? '—'}`
+    : row.category
+      ? categoryLabel(row.category as never, locale)
+      : row.note || 'Uncategorised';
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.lg - 2,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: palette.border,
+        backgroundColor: pressed ? palette.surfaceSubtle : 'transparent',
+      })}
+    >
+      {isTransfer ? (
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: radii.md,
+            backgroundColor: palette.surfaceSubtle,
+            borderWidth: 1,
+            borderColor: palette.border,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <ArrowLeftRight size={19} color={palette.foreground2} strokeWidth={2} />
+        </View>
+      ) : (
+        <CategoryGlyph icon={row.category?.icon} tone={row.category?.tone} size={44} />
+      )}
+
+      <View style={{ flex: 1, gap: 3 }}>
+        <T
+          style={{ fontSize: typography.fontSize.base, fontWeight: '600', color: palette.foreground }}
+          numberOfLines={1}
+        >
+          {title}
+        </T>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2 }}>
+          <Numeric style={{ fontSize: typography.fontSize.xs, color: palette.faint }}>
+            {row.date}
+          </Numeric>
+          {!isTransfer && row.account ? (
+            <>
+              <Text style={{ color: palette.faint, fontSize: typography.fontSize.xs }}>·</Text>
+              <T style={{ fontSize: typography.fontSize.xs, color: palette.faint }} numberOfLines={1}>
+                {row.account.deleted_at ? 'Deleted account' : row.account.name}
+              </T>
+            </>
+          ) : null}
+        </View>
+      </View>
+
+      {/* A transfer is not flow. Showing it signed would read as income or
+          expenditure; it is neither, so it renders neutral. */}
+      <Money
+        paisa={row.amount_paisa}
+        variant="body"
+        signed={!isTransfer}
+        showPlus={!isTransfer}
+        color={isTransfer ? palette.foreground2 : undefined}
+      />
+    </Pressable>
+  );
+}

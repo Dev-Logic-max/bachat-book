@@ -1,204 +1,227 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  FlatList,
-  TouchableOpacity,
-  RefreshControl,
-} from 'react-native';
+import React from 'react';
+import { Pressable, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { formatRupees } from '../../src/lib/format';
+import {
+  Banknote,
+  Building2,
+  Lock,
+  Smartphone,
+  TriangleAlert,
+  Wallet,
+  type LucideProps,
+} from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card, NavyPanel, SectionHeader } from '../../src/components/ui/Surfaces';
+import { Money } from '../../src/components/ui/Money';
+import { EmptyState, Reveal, SkeletonRow } from '../../src/components/ui/Feedback';
 import { T } from '../../src/components/T';
+import { usePalette } from '../../src/providers/theme-provider';
 import { useAccounts } from '../../src/hooks/use-accounts';
-import type { Tables } from '../../types/database';
-import { Landmark, Wallet, CreditCard } from 'lucide-react-native';
+import { ACCOUNT_TYPE_LABEL, isLiveAccount, type Account } from '../../src/lib/ledger';
+import { radii, spacing, toneOf, typography } from '../../src/theme/tokens';
+
+const TYPE_ICON: Record<string, React.ComponentType<LucideProps>> = {
+  cash: Banknote,
+  checking: Building2,
+  savings: Building2,
+  wallet: Smartphone,
+  credit: Wallet,
+  investment: Wallet,
+};
+
+/** Account type → the tone its card is washed in. Stable, so a bank always reads the same. */
+const TYPE_TONE: Record<string, number> = {
+  cash: 1,
+  checking: 2,
+  savings: 3,
+  wallet: 4,
+  credit: 6,
+  investment: 5,
+};
 
 export default function AccountsScreen() {
+  const palette = usePalette();
   const router = useRouter();
-  const { data: accounts = [], isLoading, refetch } = useAccounts();
-  const [refreshing, setRefreshing] = useState(false);
+  const { data: accounts = [], isLoading, error, refetch, isRefetching } = useAccounts();
 
-  const onRefresh = async () => {
-    setRefreshing(true);
-    await refetch();
-    setRefreshing(false);
-  };
-
-  const getAccountIcon = (type: string) => {
-    switch (type) {
-      case 'wallet':
-        return Wallet;
-      case 'credit':
-        return CreditCard;
-      case 'cash':
-        return Wallet;
-      default:
-        return Landmark;
-    }
-  };
-
-  const renderAccountItem = ({ item }: { item: Tables<'accounts'> }) => {
-    const IconComp = getAccountIcon(item.type);
-
-    return (
-      <TouchableOpacity
-        style={styles.accountCard}
-        onPress={() => router.push(`/account/${item.id}`)}
-        activeOpacity={0.8}
-      >
-        <View style={styles.cardHeader}>
-          <View style={styles.iconBg}>
-            <IconComp size={22} color={colors.light.navy900} />
-          </View>
-          <View style={styles.typeBadge}>
-            <T style={styles.typeText}>{item.type}</T>
-          </View>
-        </View>
-
-        <T style={styles.accountName}>{item.name}</T>
-        <T style={styles.accountSub}>
-          {item.account_number_last4 ? `•••• ${item.account_number_last4}` : item.currency}
-        </T>
-
-        <View style={styles.cardFooter}>
-          <T style={styles.balanceLabel}>Balance</T>
-          <Text style={styles.balanceValue}>
-            {formatRupees(item.balance_paisa)}
-          </Text>
-        </View>
-      </TouchableOpacity>
-    );
-  };
+  const live = accounts.filter(isLiveAccount);
+  // Archived and deleted accounts are SHOWN, in their own section. One that
+  // silently vanishes reads as data loss and sends you hunting for it.
+  const inactive = accounts.filter((a) => !isLiveAccount(a));
+  const held = live.reduce((sum, a) => sum + Number(a.balance_paisa), 0);
 
   return (
-    <SafeAreaView style={styles.container} edges={['top']}>
-      <View style={styles.header}>
-        <T style={styles.headerTitle}>Accounts & Ledgers</T>
+    <Screen refreshing={isRefetching} onRefresh={refetch}>
+      <T
+        style={{
+          fontSize: typography.fontSize.xxl,
+          fontWeight: '700',
+          color: palette.foreground,
+          marginBottom: spacing.xs,
+        }}
+      >
+        Accounts
+      </T>
+      <T style={{ fontSize: typography.fontSize.sm, color: palette.muted, marginBottom: spacing.xl }}>
+        Where you hold money
+      </T>
+
+      <Reveal>
+        <NavyPanel>
+          <T style={{ fontSize: typography.fontSize.sm, color: palette.onNavyMuted, fontWeight: '600' }}>
+            Total held
+          </T>
+          <Money
+            paisa={held}
+            variant="hero"
+            color={palette.onNavy}
+            style={{ marginTop: spacing.sm }}
+          />
+        </NavyPanel>
+      </Reveal>
+
+      <View style={{ marginTop: spacing.xxl }}>
+        <SectionHeader title="Your accounts" />
+
+        {error ? (
+          <Card padded={false}>
+            <EmptyState
+              variant="error"
+              icon={<TriangleAlert size={26} color={palette.loss} />}
+              title="Could not load your accounts"
+              body={error instanceof Error ? error.message : 'Pull down to try again.'}
+            />
+          </Card>
+        ) : isLoading ? (
+          <Card>
+            <SkeletonRow />
+            <SkeletonRow />
+          </Card>
+        ) : live.length === 0 ? (
+          <Card padded={false}>
+            <EmptyState
+              icon={<Wallet size={26} color={palette.muted} />}
+              title="No accounts yet"
+              body="An account is somewhere you HOLD money — a bank, a mobile wallet, or cash in hand. Accounts start at Rs 0; money arrives by logging an income entry."
+            />
+          </Card>
+        ) : (
+          <View style={{ gap: spacing.md }}>
+            {live.map((account, i) => (
+              <Reveal key={account.id} index={i}>
+                <AccountCard
+                  account={account}
+                  onPress={() => router.push(`/account/${account.id}` as never)}
+                />
+              </Reveal>
+            ))}
+          </View>
+        )}
       </View>
 
-      <FlatList
-        data={accounts}
-        keyExtractor={(item) => item.id}
-        renderItem={renderAccountItem}
-        contentContainerStyle={styles.listContent}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.light.brass} />
-        }
-        ListEmptyComponent={
-          !isLoading ? (
-            <View style={styles.emptyContainer}>
-              <T style={styles.emptyTitle}>No Accounts Added</T>
-              <T style={styles.emptySub}>Accounts created on Web will appear here.</T>
-            </View>
-          ) : null
-        }
-      />
-    </SafeAreaView>
+      {inactive.length > 0 ? (
+        <View style={{ marginTop: spacing.xxl }}>
+          <SectionHeader title="Not in use" />
+          <View style={{ gap: spacing.md }}>
+            {inactive.map((account) => (
+              <AccountCard
+                key={account.id}
+                account={account}
+                onPress={() => router.push(`/account/${account.id}` as never)}
+              />
+            ))}
+          </View>
+        </View>
+      ) : null}
+    </Screen>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  listContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
-  },
-  accountCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.lg,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    elevation: 2,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 6,
-  },
-  cardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: spacing.md,
-  },
-  iconBg: {
-    width: 44,
-    height: 44,
-    borderRadius: radii.md,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  typeBadge: {
-    backgroundColor: colors.light.brassSoft,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 4,
-    borderRadius: radii.sm,
-  },
-  typeText: {
-    fontSize: 11,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.brassStrong,
-    textTransform: 'uppercase',
-  },
-  accountName: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.foreground,
-  },
-  accountSub: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 2,
-    marginBottom: spacing.md,
-  },
-  cardFooter: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    borderTopWidth: 1,
-    borderTopColor: colors.light.border,
-    paddingTop: spacing.md,
-  },
-  balanceLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-  },
-  balanceValue: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-    fontVariant: ['tabular-nums'],
-    writingDirection: 'ltr',
-  },
-  emptyContainer: {
-    alignItems: 'center',
-    paddingVertical: spacing.xxxl,
-  },
-  emptyTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.semibold,
-    color: colors.light.foreground2,
-  },
-  emptySub: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    marginTop: spacing.xs,
-  },
-});
+function AccountCard({ account, onPress }: { account: Account; onPress: () => void }) {
+  const palette = usePalette();
+  const role = toneOf(palette, TYPE_TONE[account.type] ?? 2);
+  const Icon = TYPE_ICON[account.type] ?? Wallet;
+
+  const state = account.deleted_at ? 'Deleted' : account.is_archived ? 'Deactivated' : null;
+  const dimmed = !!state;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        backgroundColor: dimmed ? palette.surfaceSubtle : role.fill,
+        borderRadius: radii.card,
+        borderWidth: 1,
+        borderColor: dimmed ? palette.border : role.edge,
+        padding: spacing.xl,
+        opacity: pressed ? 0.88 : dimmed ? 0.72 : 1,
+      })}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+        <View
+          style={{
+            width: 44,
+            height: 44,
+            borderRadius: radii.md,
+            backgroundColor: palette.surface,
+            borderWidth: 1,
+            borderColor: dimmed ? palette.border : role.edge,
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <Icon size={21} color={dimmed ? palette.muted : role.ink} strokeWidth={2} />
+        </View>
+
+        <View style={{ flex: 1, gap: 3 }}>
+          <T
+            style={{
+              fontSize: typography.fontSize.base,
+              fontWeight: '700',
+              color: palette.foreground,
+            }}
+            numberOfLines={1}
+          >
+            {account.name}
+          </T>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.xs + 2 }}>
+            <T style={{ fontSize: typography.fontSize.xs, color: palette.muted }}>
+              {ACCOUNT_TYPE_LABEL[account.type] ?? account.type}
+            </T>
+
+            {/* A lock only bites on the way OUT — paying into savings is the
+                point of it — so the chip says so rather than reading as frozen. */}
+            {account.is_locked ? <Tag icon={<Lock size={10} color={palette.warn} />} label="Pay in only" tone={palette.warn} /> : null}
+            {state ? <Tag label={state} tone={palette.muted} /> : null}
+          </View>
+        </View>
+      </View>
+
+      <Money paisa={account.balance_paisa} variant="title" style={{ marginTop: spacing.lg }} />
+    </Pressable>
+  );
+}
+
+function Tag({ label, tone, icon }: { label: string; tone: string; icon?: React.ReactNode }) {
+  const palette = usePalette();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 3,
+        paddingHorizontal: spacing.sm,
+        paddingVertical: 2,
+        borderRadius: radii.full,
+        backgroundColor: palette.surface,
+        borderWidth: 1,
+        borderColor: palette.border,
+      }}
+    >
+      {icon}
+      <Text style={{ fontSize: 10, fontWeight: '700', color: tone, letterSpacing: 0.2 }}>
+        {label}
+      </Text>
+    </View>
+  );
+}

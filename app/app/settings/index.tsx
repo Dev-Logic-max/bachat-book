@@ -1,20 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  Platform,
-  Switch,
-} from 'react-native';
+import { Switch, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { useSession } from '../../src/providers/auth-provider';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { Button } from '../../src/components/ui/Button';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowLeft, Globe, Lock, Moon, Shield, User } from 'lucide-react-native';
+import { Screen } from '../../src/components/ui/Screen';
+import { Card, SectionHeader, Segmented } from '../../src/components/ui/Surfaces';
+import { Button, IconButton } from '../../src/components/ui/Button';
+import { Numeric } from '../../src/components/ui/Money';
 import { T } from '../../src/components/T';
-import { ArrowLeft, User, Shield, Globe, Lock } from 'lucide-react-native';
+import { usePalette, useTheme, type ThemeMode } from '../../src/providers/theme-provider';
+import { useSession } from '../../src/providers/auth-provider';
+import { formatName } from '../../src/lib/format';
+import { radii, spacing, typography } from '../../src/theme/tokens';
 import {
   checkBiometricHardware,
   isBiometricEnabled,
@@ -23,196 +20,204 @@ import {
 
 export default function SettingsScreen() {
   const router = useRouter();
+  const palette = usePalette();
+  const insets = useSafeAreaInsets();
   const { user, profile, householdId, signOut } = useSession();
+  const { mode, setMode } = useTheme();
 
   const [biometricSupported, setBiometricSupported] = useState(false);
   const [biometricActive, setBiometricActive] = useState(false);
 
+  // Both reads are asynchronous, so neither is the synchronous setState in
+  // useEffect that React Compiler rejects.
   useEffect(() => {
+    let active = true;
     checkBiometricHardware().then(({ hasHardware, isEnrolled }) => {
-      setBiometricSupported(hasHardware && isEnrolled);
+      if (active) setBiometricSupported(hasHardware && isEnrolled);
     });
-    isBiometricEnabled().then(setBiometricActive);
+    isBiometricEnabled().then((enabled) => {
+      if (active) setBiometricActive(enabled);
+    });
+    return () => {
+      active = false;
+    };
   }, []);
 
-  const handleToggleBiometric = async (value: boolean) => {
+  const toggleBiometric = async (value: boolean) => {
     setBiometricActive(value);
     await setBiometricEnabled(value);
   };
 
   return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.header}>
-        <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <ArrowLeft size={20} color={colors.light.foreground} />
-        </TouchableOpacity>
-        <T style={styles.headerTitle}>Settings</T>
-        <View style={{ width: 36 }} />
+    <View style={{ flex: 1, backgroundColor: palette.canvas }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingHorizontal: spacing.lg,
+          paddingTop: insets.top + spacing.sm,
+          paddingBottom: spacing.sm,
+        }}
+      >
+        <IconButton accessibilityLabel="Back" onPress={() => router.back()}>
+          <ArrowLeft size={19} color={palette.foreground2} />
+        </IconButton>
+        <T
+          style={{
+            flex: 1,
+            textAlign: 'center',
+            fontSize: typography.fontSize.lg,
+            fontWeight: '700',
+            color: palette.foreground,
+          }}
+        >
+          Settings
+        </T>
+        <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {/* Profile Card */}
-        <View style={styles.card}>
-          <View style={styles.profileRow}>
-            <View style={styles.avatarBg}>
-              <User size={24} color={colors.light.navy900} />
+      <Screen topInset={false}>
+        <Card>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+            <View
+              style={{
+                width: 52,
+                height: 52,
+                borderRadius: radii.full,
+                backgroundColor: palette.brassSoft,
+                borderWidth: 1,
+                borderColor: palette.brass,
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <User size={23} color={palette.brassStrong} />
             </View>
-            <View style={{ flex: 1 }}>
-              <T style={styles.userName}>
-                {profile?.first_name ? `${profile.first_name} ${profile.last_name || ''}` : 'User'}
+            <View style={{ flex: 1, gap: 3 }}>
+              <T
+                style={{
+                  fontSize: typography.fontSize.lg,
+                  fontWeight: '700',
+                  color: palette.foreground,
+                }}
+              >
+                {formatName(profile?.first_name, profile?.last_name)}
               </T>
-              <T style={styles.userEmail}>{user?.email || 'No email'}</T>
+              <Numeric style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>
+                {user?.email ?? '—'}
+              </Numeric>
             </View>
           </View>
+        </Card>
+
+        <View style={{ marginTop: spacing.xxl }}>
+          <SectionHeader title="Appearance" />
+          <Card style={{ gap: spacing.md }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.md }}>
+              <Moon size={18} color={palette.foreground2} />
+              <T
+                style={{ flex: 1, fontSize: typography.fontSize.base, color: palette.foreground }}
+              >
+                Theme
+              </T>
+            </View>
+            <Segmented<ThemeMode>
+              value={mode}
+              onChange={setMode}
+              options={[
+                { value: 'light', label: 'Light' },
+                { value: 'dark', label: 'Dark' },
+                { value: 'system', label: 'System' },
+              ]}
+            />
+          </Card>
         </View>
 
-        {/* Security Section */}
-        <T style={styles.sectionHeader}>Security</T>
-        <View style={styles.card}>
-          {biometricSupported && (
-            <>
-              <View style={styles.settingRow}>
-                <Lock size={18} color={colors.light.navy900} />
-                <T style={styles.settingLabel}>Biometric App Lock</T>
+        <View style={{ marginTop: spacing.xxl }}>
+          <SectionHeader title="Security" />
+          <Card padded={false}>
+            {biometricSupported ? (
+              <SettingRow icon={<Lock size={18} color={palette.foreground2} />} label="Lock with fingerprint or face">
                 <Switch
                   value={biometricActive}
-                  onValueChange={handleToggleBiometric}
-                  trackColor={{ false: colors.light.border, true: colors.light.brass }}
-                  thumbColor={colors.light.surface}
+                  onValueChange={toggleBiometric}
+                  trackColor={{ false: palette.border, true: palette.brass }}
+                  thumbColor={palette.surface}
                 />
-              </View>
+              </SettingRow>
+            ) : null}
 
-              <View style={styles.divider} />
-            </>
-          )}
-
-          <View style={styles.settingRow}>
-            <Shield size={18} color={colors.light.navy900} />
-            <T style={styles.settingLabel}>Active Household ID</T>
-            <Text style={styles.settingValMono} numberOfLines={1}>
-              {householdId ? `${householdId.slice(0, 8)}...` : 'None'}
-            </Text>
-          </View>
+            <SettingRow icon={<Shield size={18} color={palette.foreground2} />} label="Workspace" last>
+              <Numeric style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>
+                {householdId ? `${householdId.slice(0, 8)}…` : 'None'}
+              </Numeric>
+            </SettingRow>
+          </Card>
         </View>
 
-        {/* Preferences Section */}
-        <T style={styles.sectionHeader}>Preferences</T>
-        <View style={styles.card}>
-          <View style={styles.settingRow}>
-            <Globe size={18} color={colors.light.navy900} />
-            <T style={styles.settingLabel}>Language / Locale</T>
-            <T style={styles.settingVal}>{profile?.locale === 'ur' ? 'اردو (Urdu)' : 'English'}</T>
-          </View>
+        <View style={{ marginTop: spacing.xxl }}>
+          <SectionHeader title="Language" />
+          <Card padded={false}>
+            <SettingRow icon={<Globe size={18} color={palette.foreground2} />} label="Language" last>
+              {/* Read from `profiles.locale`. `preferences.locale` does not
+                  exist — querying it returns an error, not a fallback. */}
+              <Text style={{ fontSize: typography.fontSize.sm, color: palette.muted }}>
+                {profile?.locale === 'ur' ? 'اردو' : 'English'}
+              </Text>
+            </SettingRow>
+          </Card>
+          <T
+            style={{
+              fontSize: typography.fontSize.xs,
+              color: palette.faint,
+              marginTop: spacing.sm,
+            }}
+          >
+            Change your language on the web app for now.
+          </T>
         </View>
 
         <Button
-          title="Sign Out"
+          block
           variant="danger"
+          title="Sign out"
+          style={{ marginTop: spacing.xxxl }}
           onPress={signOut}
-          style={styles.signOutBtn}
         />
-      </ScrollView>
-    </SafeAreaView>
+      </Screen>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-  },
-  backBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  content: {
-    padding: spacing.lg,
-  },
-  card: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.lg,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    marginBottom: spacing.lg,
-  },
-  profileRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  avatarBg: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
-    backgroundColor: colors.light.brassSoft,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  userName: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.foreground,
-  },
-  userEmail: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginTop: 2,
-  },
-  sectionHeader: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.muted,
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginBottom: spacing.xs,
-    marginLeft: spacing.xs,
-  },
-  settingRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: spacing.sm,
-    gap: spacing.md,
-  },
-  settingLabel: {
-    fontSize: typography.fontSize.base,
-    color: colors.light.foreground,
-    flex: 1,
-  },
-  settingVal: {
-    fontSize: typography.fontSize.sm,
-    color: colors.light.muted,
-    fontWeight: typography.fontWeight.medium,
-  },
-  settingValMono: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
-  },
-  divider: {
-    height: 1,
-    backgroundColor: colors.light.border,
-    marginVertical: spacing.xs,
-  },
-  signOutBtn: {
-    marginTop: spacing.md,
-  },
-});
+function SettingRow({
+  icon,
+  label,
+  children,
+  last,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  children?: React.ReactNode;
+  last?: boolean;
+}) {
+  const palette = usePalette();
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: spacing.md,
+        paddingHorizontal: spacing.xl,
+        paddingVertical: spacing.lg,
+        borderBottomWidth: last ? 0 : 1,
+        borderBottomColor: palette.border,
+      }}
+    >
+      {icon}
+      <T style={{ flex: 1, fontSize: typography.fontSize.base, color: palette.foreground }}>
+        {label}
+      </T>
+      {children}
+    </View>
+  );
+}

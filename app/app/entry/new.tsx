@@ -1,459 +1,382 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  TouchableOpacity,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  ActivityIndicator,
-} from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, Text, View } from 'react-native';
 import { useRouter } from 'expo-router';
-import { SafeAreaView } from 'react-native-safe-area-context';
-import { colors, radii, spacing, typography } from '../../src/theme/tokens';
-import { rupeesToPaisa, toDateString } from '../../src/lib/format';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ArrowDownLeft, ArrowUpRight, Check, X } from 'lucide-react-native';
+import { Button, IconButton } from '../../src/components/ui/Button';
 import { Input } from '../../src/components/ui/Input';
-import { Button } from '../../src/components/ui/Button';
+import { Card, ChipRow, Chip } from '../../src/components/ui/Surfaces';
+import { CategoryGlyph } from '../../src/components/ui/CategoryGlyph';
+import { NUMERIC } from '../../src/components/ui/Money';
 import { T } from '../../src/components/T';
-import { useCategories } from '../../src/hooks/use-categories';
-import { useAccounts } from '../../src/hooks/use-accounts';
-import { useCreateQuickEntry } from '../../src/hooks/use-entries';
-import { X, ArrowDownLeft, ArrowUpRight, Link as LinkIcon, Tag } from 'lucide-react-native';
+import { usePalette } from '../../src/providers/theme-provider';
+import { useSession } from '../../src/providers/auth-provider';
+import { useCreateEntry } from '../../src/hooks/use-entries';
+import { useCategoryGroups, categoryLabel } from '../../src/hooks/use-categories';
+import { useAccounts, useCashAccountId } from '../../src/hooks/use-accounts';
+import { accountBlockedReason, ACCOUNT_TYPE_LABEL } from '../../src/lib/ledger';
+import { rupeesToPaisa, toDateString } from '../../src/lib/format';
+import { radii, spacing, toneOf, typography } from '../../src/theme/tokens';
+
+type Direction = 'expense' | 'income';
 
 export default function NewEntryScreen() {
+  const palette = usePalette();
   const router = useRouter();
-  const { data: categories = [], isLoading: categoriesLoading } = useCategories();
-  const { data: accounts = [], isLoading: accountsLoading } = useAccounts();
-  const createEntryMutation = useCreateQuickEntry();
+  const insets = useSafeAreaInsets();
+  const { profile } = useSession();
+  const locale = profile?.locale ?? 'en';
 
-  const [type, setType] = useState<'income' | 'expense'>('expense');
-  const [amountRupees, setAmountRupees] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
-  const [customCategoryName, setCustomCategoryName] = useState('');
+  const [direction, setDirection] = useState<Direction>('expense');
+  const [amount, setAmount] = useState('');
+  const [parentId, setParentId] = useState<string | null>(null);
+  const [childId, setChildId] = useState<string | null>(null);
+  const [accountId, setAccountId] = useState<string | null>(null);
   const [note, setNote] = useState('');
-  const [entryDate, setEntryDate] = useState(toDateString(new Date())); // L9 Karachi date bug fix
-  const [linkAccount, setLinkAccount] = useState(false);
-  const [selectedAccountId, setSelectedAccountId] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState('');
+  const [date] = useState(() => toDateString(new Date()));
 
-  // Filter categories by type
-  const filteredCategories = categories.filter((c) => c.kind === type || c.kind === 'transfer');
-  const availableAccounts = accounts.filter((a) => a.allow_entry_link);
+  const groups = useCategoryGroups({ kind: direction });
+  const { data: accounts = [] } = useAccounts();
+  const cashAccountId = useCashAccountId();
+  const createEntry = useCreateEntry();
 
-  const handleSave = async () => {
-    const parsedRupees = parseFloat(amountRupees);
-    if (isNaN(parsedRupees) || parsedRupees <= 0) {
-      setErrorMsg('Please enter a valid amount');
+  // DERIVED, never a `setAccountId` in an effect once accounts load — that is a
+  // synchronous setState in useEffect and React Compiler rejects it. The form
+  // defaults to cash; `ensureCashAccount()` is the submit-time backstop for a
+  // household that has no cash account yet.
+  const effectiveAccountId = accountId ?? cashAccountId;
+
+  const activeGroup = useMemo(
+    () => groups.find((g) => g.parent.id === parentId) ?? null,
+    [groups, parentId],
+  );
+
+  const amountPaisa = rupeesToPaisa(Number(amount.replace(/,/g, '')) || 0);
+  const canSave = amountPaisa > 0 && !createEntry.isPending;
+
+  const selectedAccount = accounts.find((a) => a.id === effectiveAccountId);
+  const blocked = selectedAccount ? accountBlockedReason(selectedAccount, direction) : null;
+
+  const submit = () => {
+    if (!canSave) return;
+    if (blocked) {
+      Alert.alert(
+        `That account is ${blocked.toLowerCase()}`,
+        'Pick another account for this entry.',
+      );
       return;
     }
 
-    // Determine category name & category_id (L2 fix)
-    let categoryName = customCategoryName.trim();
-    let catId: string | null = selectedCategoryId;
-
-    if (selectedCategoryId) {
-      const found = categories.find((c) => c.id === selectedCategoryId);
-      if (found) categoryName = found.name;
-    }
-
-    if (!categoryName) {
-      categoryName = type === 'income' ? 'Income' : 'Expense';
-    }
-
-    setErrorMsg('');
-
-    try {
-      const amountPaisa = rupeesToPaisa(parsedRupees);
-
-      // Single atomic save mutation (L2 fix: pre-populates linked_transaction_id on initial insert)
-      await createEntryMutation.mutateAsync({
-        type,
+    createEntry.mutate(
+      {
+        type: direction,
+        // POSITIVE magnitude. The sign is applied once, in `toSignedPaisa`.
         amount_paisa: amountPaisa,
-        category: categoryName,
-        category_id: catId,
+        category_id: childId ?? parentId,
+        account_id: effectiveAccountId,
         note: note.trim() || null,
-        entry_date: entryDate,
-        linked_account_id: linkAccount ? selectedAccountId || availableAccounts[0]?.id : null,
-      });
-
-      router.back();
-    } catch (e: any) {
-      setErrorMsg(e.message || 'Failed to save entry');
-    }
+        entry_date: date,
+      },
+      {
+        onSuccess: () => router.back(),
+        onError: (err) =>
+          Alert.alert('Could not save', err instanceof Error ? err.message : 'Please try again.'),
+      },
+    );
   };
 
   return (
-    <SafeAreaView style={styles.container}>
+    <View style={{ flex: 1, backgroundColor: palette.canvas }}>
+      {/* ---- Header --------------------------------------------------- */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingHorizontal: spacing.lg,
+          paddingTop: insets.top + spacing.sm,
+          paddingBottom: spacing.md,
+        }}
+      >
+        <IconButton accessibilityLabel="Close" onPress={() => router.back()}>
+          <X size={19} color={palette.foreground2} />
+        </IconButton>
+        <T style={{ fontSize: typography.fontSize.lg, fontWeight: '700', color: palette.foreground }}>
+          New entry
+        </T>
+        <View style={{ width: 40 }} />
+      </View>
+
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        {/* Header */}
-        <View style={styles.header}>
-          <TouchableOpacity onPress={() => router.back()} style={styles.closeBtn}>
-            <X size={20} color={colors.light.foreground} />
-          </TouchableOpacity>
-          <T style={styles.headerTitle}>New Entry</T>
-          <View style={{ width: 36 }} />
-        </View>
-
-        <ScrollView contentContainerStyle={styles.scrollContent}>
-          {/* Income / Expense Switcher */}
-          <View style={styles.typeSwitcher}>
-            <TouchableOpacity
-              style={[styles.typeBtn, type === 'expense' ? styles.typeBtnExpense : undefined]}
+        <ScrollView
+          contentContainerStyle={{
+            paddingHorizontal: spacing.lg,
+            paddingBottom: spacing.xxxl * 2,
+            gap: spacing.xl,
+          }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+        >
+          {/* ---- Direction ------------------------------------------- */}
+          <View style={{ flexDirection: 'row', gap: spacing.md }}>
+            <DirectionButton
+              label="Money out"
+              active={direction === 'expense'}
+              tint={palette.loss}
+              icon={<ArrowUpRight size={18} color={direction === 'expense' ? '#FFF' : palette.loss} strokeWidth={2.6} />}
               onPress={() => {
-                setType('expense');
-                setSelectedCategoryId(null);
+                setDirection('expense');
+                setParentId(null);
+                setChildId(null);
               }}
-            >
-              <ArrowUpRight size={18} color={type === 'expense' ? colors.light.loss : colors.light.muted} />
-              <T style={[styles.typeText, type === 'expense' ? styles.typeTextExpense : undefined]}>Expense</T>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.typeBtn, type === 'income' ? styles.typeBtnIncome : undefined]}
+            />
+            <DirectionButton
+              label="Money in"
+              active={direction === 'income'}
+              tint={palette.gain}
+              icon={<ArrowDownLeft size={18} color={direction === 'income' ? '#FFF' : palette.gain} strokeWidth={2.6} />}
               onPress={() => {
-                setType('income');
-                setSelectedCategoryId(null);
+                setDirection('income');
+                setParentId(null);
+                setChildId(null);
               }}
-            >
-              <ArrowDownLeft size={18} color={type === 'income' ? colors.light.gain : colors.light.muted} />
-              <T style={[styles.typeText, type === 'income' ? styles.typeTextIncome : undefined]}>Income</T>
-            </TouchableOpacity>
-          </View>
-
-          {!!errorMsg && (
-            <View style={styles.errorBox}>
-              <Text style={styles.errorBoxText}>{errorMsg}</Text>
-            </View>
-          )}
-
-          {/* Amount Field */}
-          <Input
-            label="Amount (PKR)"
-            placeholder="0.00"
-            keyboardType="decimal-pad"
-            value={amountRupees}
-            onChangeText={setAmountRupees}
-            style={styles.amountInput}
-          />
-
-          {/* DB Category Selector (L2 Fix) */}
-          <View style={styles.sectionContainer}>
-            <T style={styles.label}>Category</T>
-            {categoriesLoading ? (
-              <ActivityIndicator size="small" color={colors.light.brass} style={{ alignSelf: 'flex-start' }} />
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipRow}>
-                {filteredCategories.map((cat) => (
-                  <TouchableOpacity
-                    key={cat.id}
-                    style={[
-                      styles.categoryChip,
-                      selectedCategoryId === cat.id ? styles.categoryChipActive : undefined,
-                    ]}
-                    onPress={() => {
-                      setSelectedCategoryId(cat.id);
-                      setCustomCategoryName(cat.name);
-                    }}
-                  >
-                    <Tag size={14} color={selectedCategoryId === cat.id ? colors.light.navy900 : colors.light.muted} />
-                    <T
-                      style={[
-                        styles.categoryChipText,
-                        selectedCategoryId === cat.id ? styles.categoryChipTextActive : undefined,
-                      ]}
-                    >
-                      {cat.name}
-                    </T>
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-            )}
-            <Input
-              placeholder="Or type custom category..."
-              value={customCategoryName}
-              onChangeText={(val) => {
-                setCustomCategoryName(val);
-                setSelectedCategoryId(null);
-              }}
-              containerStyle={{ marginTop: spacing.xs }}
             />
           </View>
 
-          {/* Note */}
+          {/* ---- Amount ---------------------------------------------- */}
+          <Card>
+            <T style={{ fontSize: typography.fontSize.sm, color: palette.muted, fontWeight: '600' }}>
+              Amount
+            </T>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.sm }}>
+              <Text
+                style={[
+                  NUMERIC,
+                  { fontSize: 22, fontWeight: '700', color: palette.muted },
+                ]}
+              >
+                Rs
+              </Text>
+              <Input
+                containerStyle={{ flex: 1 }}
+                style={{ fontSize: 34, fontWeight: '800', height: 56 }}
+                numeric
+                value={amount}
+                onChangeText={(text) => setAmount(text.replace(/[^0-9.]/g, ''))}
+                placeholder="0"
+                keyboardType="decimal-pad"
+                autoFocus
+              />
+            </View>
+          </Card>
+
+          {/* ---- Category, two steps --------------------------------- */}
+          <View style={{ gap: spacing.md }}>
+            <T style={{ fontSize: typography.fontSize.sm, fontWeight: '700', color: palette.foreground }}>
+              Category
+            </T>
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: spacing.sm }}>
+              {groups.map((group) => {
+                const active = group.parent.id === parentId;
+                const role = toneOf(palette, group.parent.tone);
+                return (
+                  <Pressable
+                    key={group.parent.id}
+                    onPress={() => {
+                      setParentId(active ? null : group.parent.id);
+                      setChildId(null);
+                    }}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      gap: spacing.sm,
+                      paddingVertical: spacing.sm,
+                      paddingHorizontal: spacing.md,
+                      borderRadius: radii.full,
+                      backgroundColor: active ? role.ink : role.fill,
+                      borderWidth: 1,
+                      borderColor: active ? role.ink : role.edge,
+                    }}
+                  >
+                    <CategoryGlyph
+                      icon={group.parent.icon}
+                      tone={group.parent.tone}
+                      artPath={group.parent.art_path}
+                      size={26}
+                    />
+                    <T
+                      style={{
+                        fontSize: typography.fontSize.sm,
+                        fontWeight: '600',
+                        color: active ? '#FFFFFF' : palette.foreground,
+                      }}
+                    >
+                      {categoryLabel(group.parent, locale)}
+                    </T>
+                  </Pressable>
+                );
+              })}
+            </View>
+
+            {/* Subcategories exist for the user's own understanding. What gets
+                STORED is one category_id — the subcategory when chosen, else
+                the main — so reports are unaffected either way. */}
+            {activeGroup && activeGroup.children.length > 0 ? (
+              <ChipRow>
+                {activeGroup.children.map((child) => (
+                  <Chip
+                    key={child.id}
+                    label={categoryLabel(child, locale)}
+                    tone={child.tone}
+                    selected={child.id === childId}
+                    onPress={() => setChildId(child.id === childId ? null : child.id)}
+                  />
+                ))}
+              </ChipRow>
+            ) : null}
+          </View>
+
+          {/* ---- Account --------------------------------------------- */}
+          <View style={{ gap: spacing.md }}>
+            <T style={{ fontSize: typography.fontSize.sm, fontWeight: '700', color: palette.foreground }}>
+              Paid from
+            </T>
+            <ChipRow>
+              {accounts.map((account) => {
+                const reason = accountBlockedReason(account, direction);
+                const selected = account.id === effectiveAccountId;
+                return (
+                  <Pressable
+                    key={account.id}
+                    // Unavailable accounts are SHOWN, greyed, with the reason —
+                    // never hidden. The database enforces the rule anyway
+                    // (`assert_account_accepts_movement`); this is the
+                    // explanation, not the protection.
+                    disabled={!!reason}
+                    onPress={() => setAccountId(account.id)}
+                    style={{
+                      paddingHorizontal: spacing.lg,
+                      paddingVertical: spacing.md - 2,
+                      borderRadius: radii.full,
+                      backgroundColor: selected ? palette.navy900 : palette.surface,
+                      borderWidth: 1,
+                      borderColor: selected ? palette.navy900 : palette.border,
+                      opacity: reason ? 0.5 : 1,
+                    }}
+                  >
+                    <T
+                      style={{
+                        fontSize: typography.fontSize.sm,
+                        fontWeight: '600',
+                        color: selected ? palette.onNavy : palette.foreground,
+                      }}
+                    >
+                      {account.name}
+                      {reason ? ` · ${reason}` : ''}
+                    </T>
+                    <T
+                      style={{
+                        fontSize: 10,
+                        color: selected ? palette.onNavyMuted : palette.faint,
+                        marginTop: 1,
+                      }}
+                    >
+                      {ACCOUNT_TYPE_LABEL[account.type] ?? account.type}
+                    </T>
+                  </Pressable>
+                );
+              })}
+            </ChipRow>
+            {accounts.length === 0 ? (
+              <T style={{ fontSize: typography.fontSize.xs, color: palette.muted }}>
+                No accounts yet — this will be logged against Cash, which is created for you.
+              </T>
+            ) : null}
+          </View>
+
+          {/* ---- Note ------------------------------------------------- */}
           <Input
-            label="Note / Details"
-            placeholder="Optional description"
+            label="Note"
+            placeholder="What was this for?"
             value={note}
             onChangeText={setNote}
-          />
-
-          {/* Date */}
-          <Input
-            label="Date"
-            placeholder="YYYY-MM-DD"
-            value={entryDate}
-            onChangeText={setEntryDate}
-          />
-
-          {/* Optional Account Link */}
-          {availableAccounts.length > 0 && (
-            <View style={styles.linkCard}>
-              <TouchableOpacity
-                style={styles.linkToggle}
-                onPress={() => setLinkAccount(!linkAccount)}
-              >
-                <View style={styles.linkToggleLeft}>
-                  <LinkIcon size={18} color={linkAccount ? colors.light.brassStrong : colors.light.muted} />
-                  <T style={styles.linkToggleText}>Link to Bank / Cash Account</T>
-                </View>
-                <View style={[styles.checkbox, linkAccount ? styles.checkboxActive : undefined]}>
-                  {linkAccount && <Text style={styles.checkmark}>✓</Text>}
-                </View>
-              </TouchableOpacity>
-
-              {linkAccount && (
-                <View style={styles.accountSelector}>
-                  <T style={styles.selectorLabel}>Select Account:</T>
-                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.accountList}>
-                    {availableAccounts.map((acc) => (
-                      <TouchableOpacity
-                        key={acc.id}
-                        style={[
-                          styles.accountChip,
-                          (selectedAccountId || availableAccounts[0]?.id) === acc.id
-                            ? styles.accountChipActive
-                            : undefined,
-                        ]}
-                        onPress={() => setSelectedAccountId(acc.id)}
-                      >
-                        <T
-                          style={[
-                            styles.chipText,
-                            (selectedAccountId || availableAccounts[0]?.id) === acc.id
-                              ? styles.chipTextActive
-                              : undefined,
-                          ]}
-                        >
-                          {acc.name}
-                        </T>
-                      </TouchableOpacity>
-                    ))}
-                  </ScrollView>
-                </View>
-              )}
-            </View>
-          )}
-
-          <Button
-            title="Save Entry"
-            onPress={handleSave}
-            loading={createEntryMutation.isPending}
-            style={styles.submitBtn}
+            hint={`Dated ${date}`}
           />
         </ScrollView>
+
+        {/* ---- Save --------------------------------------------------- */}
+        <View
+          style={{
+            paddingHorizontal: spacing.lg,
+            paddingTop: spacing.md,
+            paddingBottom: Math.max(insets.bottom, spacing.lg),
+            borderTopWidth: 1,
+            borderTopColor: palette.border,
+            backgroundColor: palette.surface,
+          }}
+        >
+          <Button
+            block
+            size="lg"
+            title={direction === 'expense' ? 'Save expense' : 'Save income'}
+            icon={<Check size={19} color={palette.onNavy} strokeWidth={2.6} />}
+            disabled={!canSave}
+            loading={createEntry.isPending}
+            onPress={submit}
+          />
+        </View>
       </KeyboardAvoidingView>
-    </SafeAreaView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.light.canvas,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.light.border,
-  },
-  closeBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: colors.light.surfaceSubtle,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  headerTitle: {
-    fontSize: typography.fontSize.lg,
-    fontWeight: typography.fontWeight.bold,
-    color: colors.light.navy900,
-  },
-  scrollContent: {
-    padding: spacing.lg,
-  },
-  typeSwitcher: {
-    flexDirection: 'row',
-    backgroundColor: colors.light.surfaceSubtle,
-    borderRadius: radii.md,
-    padding: 4,
-    marginBottom: spacing.lg,
-  },
-  typeBtn: {
-    flex: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: spacing.sm,
-    borderRadius: radii.sm,
-    gap: spacing.xs,
-  },
-  typeBtnExpense: {
-    backgroundColor: colors.light.lossSoft,
-  },
-  typeBtnIncome: {
-    backgroundColor: colors.light.gainSoft,
-  },
-  typeText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.light.muted,
-  },
-  typeTextExpense: {
-    color: colors.light.loss,
-    fontWeight: typography.fontWeight.bold,
-  },
-  typeTextIncome: {
-    color: colors.light.gain,
-    fontWeight: typography.fontWeight.bold,
-  },
-  amountInput: {
-    fontSize: typography.fontSize.xxl,
-    fontWeight: typography.fontWeight.bold,
-    height: 56,
-  },
-  sectionContainer: {
-    marginBottom: spacing.md,
-  },
-  label: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.light.foreground2,
-    marginBottom: spacing.xs,
-  },
-  chipRow: {
-    flexDirection: 'row',
-    marginBottom: spacing.xs,
-  },
-  categoryChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    backgroundColor: colors.light.surface,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.full,
-    marginRight: spacing.xs,
-  },
-  categoryChipActive: {
-    backgroundColor: colors.light.brassSoft,
-    borderColor: colors.light.brass,
-  },
-  categoryChipText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.foreground,
-  },
-  categoryChipTextActive: {
-    color: colors.light.navy900,
-    fontWeight: typography.fontWeight.bold,
-  },
-  errorBox: {
-    backgroundColor: colors.light.lossSoft,
-    borderRadius: radii.sm,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  errorBoxText: {
-    color: colors.light.loss,
-    fontSize: typography.fontSize.sm,
-  },
-  linkCard: {
-    backgroundColor: colors.light.surface,
-    borderRadius: radii.card,
-    padding: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.light.border,
-    marginBottom: spacing.lg,
-  },
-  linkToggle: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  linkToggleLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-  },
-  linkToggleText: {
-    fontSize: typography.fontSize.sm,
-    fontWeight: typography.fontWeight.medium,
-    color: colors.light.foreground,
-  },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.light.borderStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxActive: {
-    backgroundColor: colors.light.brass,
-    borderColor: colors.light.brass,
-  },
-  checkmark: {
-    color: colors.light.navy900,
-    fontSize: 12,
-    fontWeight: 'bold',
-  },
-  accountSelector: {
-    marginTop: spacing.md,
-    paddingTop: spacing.md,
-    borderTopWidth: 1,
-    borderTopColor: colors.light.border,
-  },
-  selectorLabel: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.muted,
-    marginBottom: spacing.xs,
-  },
-  accountList: {
-    flexDirection: 'row',
-  },
-  accountChip: {
-    backgroundColor: colors.light.surfaceSubtle,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: radii.full,
-    marginRight: spacing.xs,
-    borderWidth: 1,
-    borderColor: 'transparent',
-  },
-  accountChipActive: {
-    backgroundColor: colors.light.brassSoft,
-    borderColor: colors.light.brass,
-  },
-  chipText: {
-    fontSize: typography.fontSize.xs,
-    color: colors.light.foreground2,
-  },
-  chipTextActive: {
-    color: colors.light.brassStrong,
-    fontWeight: typography.fontWeight.bold,
-  },
-  submitBtn: {
-    marginTop: spacing.md,
-  },
-});
+function DirectionButton({
+  label,
+  active,
+  tint,
+  icon,
+  onPress,
+}: {
+  label: string;
+  active: boolean;
+  tint: string;
+  icon: React.ReactNode;
+  onPress: () => void;
+}) {
+  const palette = usePalette();
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityState={{ selected: active }}
+      style={({ pressed }) => ({
+        flex: 1,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: spacing.sm,
+        paddingVertical: spacing.lg,
+        borderRadius: radii.lg,
+        backgroundColor: active ? tint : palette.surface,
+        borderWidth: 1.5,
+        borderColor: active ? tint : palette.border,
+        opacity: pressed ? 0.88 : 1,
+      })}
+    >
+      {icon}
+      <T
+        style={{
+          fontSize: typography.fontSize.base,
+          fontWeight: '700',
+          color: active ? '#FFFFFF' : palette.foreground,
+        }}
+      >
+        {label}
+      </T>
+    </Pressable>
+  );
+}

@@ -1,50 +1,31 @@
+/**
+ * Kept as a thin adapter so screens written against the old `variant` API keep
+ * compiling. New code should reach for `Surfaces` directly — `Card`, `ToneCard`
+ * and `NavyPanel` there take the palette from the theme rather than a variant
+ * string, which is what makes them work in dark mode.
+ */
 import React from 'react';
-import { View, StyleSheet, ViewProps, ViewStyle } from 'react-native';
-import { colors, radii, spacing } from '../../theme/tokens';
-import { shadows } from '../../theme/shadows';
+import type { StyleProp, ViewStyle } from 'react-native';
+import { Card as SurfaceCard, NavyPanel } from './Surfaces';
 
-interface CardProps extends ViewProps {
+export { ToneCard, NavyPanel, SectionHeader, Chip, ChipRow, Segmented, StatTile } from './Surfaces';
+
+export function Card({
+  variant = 'surface',
+  style,
+  children,
+}: {
   variant?: 'surface' | 'navy' | 'subtle' | 'outline';
-  style?: ViewStyle | ViewStyle[];
+  style?: StyleProp<ViewStyle>;
   children: React.ReactNode;
-}
-
-export function Card({ variant = 'surface', style, children, ...props }: CardProps) {
-  const getVariantStyle = (): ViewStyle => {
-    switch (variant) {
-      case 'navy':
-        return {
-          backgroundColor: colors.light.navy900,
-          ...shadows.md,
-        };
-      case 'subtle':
-        return {
-          backgroundColor: colors.light.surfaceSubtle,
-        };
-      case 'outline':
-        return {
-          backgroundColor: colors.light.surface,
-          borderWidth: 1,
-          borderColor: colors.light.border,
-        };
-      default:
-        return {
-          backgroundColor: colors.light.surface,
-          ...shadows.sm,
-        };
-    }
-  };
+}) {
+  if (variant === 'navy') {
+    return <NavyPanel style={style}>{children}</NavyPanel>;
+  }
 
   return (
-    <View style={[styles.card, getVariantStyle(), style]} {...props}>
+    <SurfaceCard tier={variant === 'subtle' ? 'nested' : 'surface'} style={style}>
       {children}
-    </View>
+    </SurfaceCard>
   );
 }
-
-const styles = StyleSheet.create({
-  card: {
-    borderRadius: radii.card,
-    padding: spacing.lg,
-  },
-});

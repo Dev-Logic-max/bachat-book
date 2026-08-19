@@ -11,6 +11,11 @@ import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { isFilerCardHidden, restoreFilerCard } from "@/components/app-rail";
 import { APP_VERSION_LABEL } from "@/lib/version";
+import {
+  NO_INTEGRATIONS,
+  loadIntegrations,
+  setIntegration,
+} from "@/lib/investment-actions";
 
 export default function PreferencesSettingsPage() {
   const session = useSession();
@@ -166,6 +171,16 @@ export default function PreferencesSettingsPage() {
           <FilerCardPreference />
         </div>
 
+        {/*
+          The Wealth bridges. A household setting rather than a personal one —
+          whether an investment debits the family's bank account is a fact about
+          the workspace, not a display preference — so it saves on click and is
+          deliberately OUTSIDE the form's Save button.
+        */}
+        <div className="border-t border-border pt-5">
+          <WealthSyncPreferences />
+        </div>
+
         <div className="flex items-center justify-between gap-4 border-t border-border pt-5">
           <p className="text-faint ltr text-[11px]">Bachat Book {APP_VERSION_LABEL}</p>
           <Button type="submit" variant="primary" isLoading={loading}>
@@ -173,6 +188,135 @@ export default function PreferencesSettingsPage() {
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/**
+ * Whether the Wealth modules write into the ledger.
+ *
+ * OFF is the default and the honest one. With a bridge shut, Investments,
+ * Committee and Zakat keep their own records and touch no balance — which is
+ * what you want on day one, when you are entering the gold you have owned for
+ * ten years and the plot your father left you. Turning a bridge ON changes only
+ * what happens NEXT: nothing is backfilled, because flipping one switch should
+ * never swing a bank balance by lakhs with no screen able to say why.
+ */
+function WealthSyncPreferences() {
+  const session = useSession();
+  const supabase = createClient();
+  const { showToast } = useToast();
+
+  const householdId = session.household?.id || "";
+  const readOnly = session.workspace ? !session.workspace.is_active : false;
+
+  const [flags, setFlags] = React.useState(NO_INTEGRATIONS);
+  const [loaded, setLoaded] = React.useState(false);
+  const [busy, setBusy] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    if (!householdId) return;
+
+    loadIntegrations(supabase, householdId)
+      .then((next) => {
+        if (!active) return;
+        setFlags(next);
+        setLoaded(true);
+      })
+      .catch(() => {
+        // No row yet is the normal state, and any other failure must still let
+        // the rest of this page render. All-false is the correct fallback.
+        if (active) setLoaded(true);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [householdId, supabase]);
+
+  const toggle = async (key: keyof typeof NO_INTEGRATIONS, next: boolean) => {
+    setBusy(key);
+    const previous = flags;
+    setFlags({ ...flags, [key]: next });
+
+    try {
+      await setIntegration(supabase, householdId, { [key]: next });
+      showToast({
+        type: "success",
+        title: next ? "Syncing on" : "Syncing off",
+        description: next
+          ? "New records from here on will name an account and move real money. Nothing already recorded has changed."
+          : "Records from here on stay inside their own module. Anything already linked stays linked.",
+      });
+    } catch (err) {
+      setFlags(previous);
+      showToast({
+        type: "error",
+        title: "Could not change it",
+        description: err instanceof Error ? err.message : "Something went wrong.",
+      });
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const ROWS: {
+    key: keyof typeof NO_INTEGRATIONS;
+    label: string;
+    description: string;
+  }[] = [
+    {
+      key: "sync_investments",
+      label: "Investments",
+      description:
+        "Buying a holding comes out of the account you name, and profit received lands in it. Recorded as savings moving, never as spending.",
+    },
+    {
+      key: "sync_committees",
+      label: "Committee (BC)",
+      description:
+        "Each monthly instalment leaves your account and your payout arrives in it. Neither counts as income or expense — a committee always returns your own money.",
+    },
+    {
+      key: "sync_zakat",
+      label: "Zakat payments",
+      description:
+        "Logging a payment to Edhi or a madrassa also writes a real expense entry, so the money leaving your account is accounted for.",
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <h3 className="font-display text-base font-semibold">
+          Sync Wealth to my ledger
+        </h3>
+        <p className="text-muted mt-0.5 text-xs leading-relaxed">
+          Off by default. Your Wealth modules keep their own records and change
+          no bank balance until you turn one of these on — and turning one on
+          only affects what you record afterwards.
+        </p>
+      </div>
+
+      {ROWS.map((row) => (
+        <Toggle
+          key={row.key}
+          checked={flags[row.key]}
+          onChange={(next) => {
+            if (!readOnly && loaded && busy === null) void toggle(row.key, next);
+          }}
+          label={row.label}
+          description={row.description}
+        />
+      ))}
+
+      {readOnly && (
+        <p className="text-faint text-[11px]">
+          This workspace is read-only on your current plan, so these cannot be
+          changed here.
+        </p>
+      )}
     </div>
   );
 }

@@ -1,8 +1,14 @@
 /**
- * Generated from the live schema. Regenerate after every migration:
- *   pnpm db:types
+ * This file is HAND-WRITTEN. Do not run `supabase gen types` over it.
  *
- * Hand-edits here will be overwritten.
+ * The generator emits table shapes and nothing else, so every string-union alias
+ * below — the ones that mirror a CHECK constraint, like `TaskPriority`,
+ * `AccountType` and `InvestmentKind` — disappears, and about forty import sites
+ * break with them. `Views<>` goes too, and every view column comes back nullable
+ * because Postgres cannot infer NOT NULL through a view. It was tried once and
+ * produced twenty errors of pure noise.
+ *
+ * Add new columns and tables by hand after each migration.
  */
 
 export type Json =
@@ -45,6 +51,44 @@ export type EventBudgetKind =
   | "shaadi"
   | "school"
   | "custom";
+/* -------------------------------------------------------------------------- *
+ * Investments — mirrors investments_kind_check and friends.
+ * -------------------------------------------------------------------------- */
+
+/** What you are holding. Mirrors `investments_kind_check`. */
+export type InvestmentKind =
+  | "nss"
+  | "prize_bond"
+  | "psx"
+  | "mutual_fund"
+  | "gold"
+  | "property"
+  | "business"
+  | "fixed_deposit"
+  | "foreign_currency"
+  | "crypto"
+  | "other";
+
+export type InvestmentStatus = "active" | "matured" | "sold" | "closed";
+
+/** How often the holding pays out, used to project income and flag a miss. */
+export type PayoutFrequency =
+  | "monthly"
+  | "quarterly"
+  | "biannual"
+  | "annual"
+  | "on_maturity"
+  | "none";
+
+/**
+ * Where a payout went.
+ *
+ * `reinvested` can never carry an account or a transaction — no cash arrived,
+ * so there is nothing for the ledger to record. The database enforces this in
+ * `investment_payouts_reinvested_has_no_account`.
+ */
+export type PayoutDestination = "received" | "reinvested";
+
 /**
  * What an institution IS, for grouping the catalogue.
  *
@@ -342,6 +386,153 @@ export type Database = {
         };
         Update: Partial<
           Database["public"]["Tables"]["event_budget_overrides"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      /**
+       * The opt-in bridges from Wealth into the ledger. One row per household,
+       * every flag false until someone turns it on.
+       */
+      household_integrations: {
+        Row: {
+          household_id: string;
+          sync_investments: boolean;
+          sync_committees: boolean;
+          sync_zakat: boolean;
+          updated_at: string;
+        };
+        Insert: {
+          household_id: string;
+          sync_investments?: boolean;
+          sync_committees?: boolean;
+          sync_zakat?: boolean;
+          updated_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["household_integrations"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      investments: {
+        Row: {
+          id: string;
+          household_id: string;
+          name: string;
+          kind: InvestmentKind;
+          institution_id: string | null;
+          status: InvestmentStatus;
+          purchase_date: string;
+          expected_exit_date: string | null;
+          expected_return_pct: number | null;
+          payout_frequency: PayoutFrequency;
+          principal_paisa: number;
+          current_value_paisa: number;
+          value_as_of: string;
+          units: number | null;
+          unit_label: string | null;
+          unit_cost_paisa: number | null;
+          /** Null means no account was ever debited for this holding. */
+          account_id: string | null;
+          funding_transaction_id: string | null;
+          exit_date: string | null;
+          exit_value_paisa: number | null;
+          exit_transaction_id: string | null;
+          note: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          name: string;
+          kind?: InvestmentKind;
+          institution_id?: string | null;
+          status?: InvestmentStatus;
+          purchase_date?: string;
+          expected_exit_date?: string | null;
+          expected_return_pct?: number | null;
+          payout_frequency?: PayoutFrequency;
+          principal_paisa: number;
+          current_value_paisa?: number;
+          value_as_of?: string;
+          units?: number | null;
+          unit_label?: string | null;
+          unit_cost_paisa?: number | null;
+          account_id?: string | null;
+          funding_transaction_id?: string | null;
+          exit_date?: string | null;
+          exit_value_paisa?: number | null;
+          exit_transaction_id?: string | null;
+          note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["investments"]["Insert"]>;
+        Relationships: [];
+      };
+      /**
+       * Every re-valuation, kept rather than overwritten, so a holding can draw
+       * a real line. A trigger copies the newest one onto the parent's
+       * `current_value_paisa` — that column has no other writer.
+       */
+      investment_valuations: {
+        Row: {
+          id: string;
+          investment_id: string;
+          household_id: string;
+          as_of: string;
+          value_paisa: number;
+          unit_price_paisa: number | null;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          investment_id: string;
+          household_id: string;
+          as_of?: string;
+          value_paisa: number;
+          unit_price_paisa?: number | null;
+          note?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["investment_valuations"]["Insert"]
+        >;
+        Relationships: [];
+      };
+      /**
+       * Profit that actually arrived. `amount_paisa` is UNSIGNED — direction
+       * lives in `destination`, and a payout is never negative. This is the
+       * opposite convention to `transactions.amount_paisa`, which is signed.
+       */
+      investment_payouts: {
+        Row: {
+          id: string;
+          investment_id: string;
+          household_id: string;
+          date: string;
+          amount_paisa: number;
+          destination: PayoutDestination;
+          account_id: string | null;
+          transaction_id: string | null;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          investment_id: string;
+          household_id: string;
+          date?: string;
+          amount_paisa: number;
+          destination?: PayoutDestination;
+          account_id?: string | null;
+          transaction_id?: string | null;
+          note?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<
+          Database["public"]["Tables"]["investment_payouts"]["Insert"]
         >;
         Relationships: [];
       };

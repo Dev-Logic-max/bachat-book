@@ -1,33 +1,331 @@
 "use client";
 
 import * as React from "react";
-import { TrendingUp, Plus, ShieldCheck, Landmark, BarChart3 } from "lucide-react";
-import { useSession } from "@/components/session-provider";
+import {
+  Banknote,
+  Bitcoin,
+  Boxes,
+  ChartPie,
+  Coins,
+  Factory,
+  Gem,
+  Globe,
+  Landmark,
+  Link2,
+  Map as MapIcon,
+  PiggyBank,
+  Plus,
+  Search,
+  Ticket,
+  TrendingUp,
+  Undo2,
+  Wallet,
+} from "lucide-react";
+
+import type { AccountWithInstitution } from "@/components/account-options";
+import { EmptyState } from "@/components/empty-state";
+import { FilterBar } from "@/components/filter-bar";
+import { InvestmentModal } from "@/components/investment-modal";
+import {
+  CloseInvestmentModal,
+  LinkHoldingModal,
+  PayoutModal,
+  ValuationModal,
+} from "@/components/investment-modals";
+import { MerchantMark } from "@/components/merchant-mark";
 import { PageActions } from "@/components/page-actions";
-import { formatPKR } from "@/lib/format";
+import { Reveal } from "@/components/reveal";
+import { useSession } from "@/components/session-provider";
+import { Button } from "@/components/ui/button";
+import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
+import { Input } from "@/components/ui/input";
+import { RichSelect } from "@/components/ui/select";
+import { RowActions } from "@/components/ui/row-actions";
+import { useToast } from "@/components/ui/toast";
+import { formatPKR, formatPKRCompact, formatPercent } from "@/lib/format";
+import { institutionLogo } from "@/lib/ledger";
+import {
+  INVESTMENT_KINDS,
+  INVESTMENT_SORTS,
+  annualisedReturnFraction,
+  daysToExit,
+  investmentKind,
+  investmentReturn,
+  investmentReturnFraction,
+  isOpen as isHoldingOpen,
+  matchesQuery,
+  payoutsByPeriod,
+  portfolioTotals,
+  projectedAnnualIncomePaisa,
+  sortInvestments,
+  type InvestmentSort,
+  type PayoutPeriod,
+} from "@/lib/investments";
+import {
+  deleteInvestment,
+  loadIntegrations,
+  reopenInvestment,
+} from "@/lib/investment-actions";
+import { createClient } from "@/lib/supabase/client";
+import type { Tables } from "@/lib/supabase/types";
 
-export default function InvestmentsVaultPage() {
+type Holding = Tables<"investments">;
+type Payout = Tables<"investment_payouts">;
+
+/** Lucide name → component. Keeps `lib/investments.ts` free of JSX. */
+const KIND_ICON: Record<string, React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>> = {
+  Landmark,
+  Ticket,
+  TrendingUp,
+  ChartPie,
+  Gem,
+  Map: MapIcon,
+  Factory,
+  PiggyBank,
+  Globe,
+  Bitcoin,
+  Boxes,
+};
+
+const PERIODS: { key: PayoutPeriod; label: string }[] = [
+  { key: "week", label: "Weekly" },
+  { key: "month", label: "Monthly" },
+  { key: "quarter", label: "Quarterly" },
+  { key: "year", label: "Yearly" },
+];
+
+export default function InvestmentsPage() {
   const session = useSession();
+  const supabase = createClient();
+  const { showToast } = useToast();
 
-  const holdings = [
-    { id: "1", name: "National Savings - Behbood Certificate (NSS)", type: "Govt Savings", valPaisa: 100000000, profitRate: "13.8%" },
-    { id: "2", name: "Meezan Islamic Fund (MIF)", type: "Mutual Fund", valPaisa: 35000000, profitRate: "18.2%" },
-    { id: "3", name: "Meezan Bank Limited (MEBL - PSX)", type: "Stocks", valPaisa: 28000000, profitRate: "+12.4%" },
-  ];
+  const householdId = session.household?.id || "";
+  const readOnly = session.workspace ? !session.workspace.is_active : false;
 
-  const totalVaultPaisa = holdings.reduce((sum, h) => sum + h.valPaisa, 0);
+  const [holdings, setHoldings] = React.useState<Holding[]>([]);
+  const [payouts, setPayouts] = React.useState<Payout[]>([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
+  const [institutions, setInstitutions] = React.useState<Tables<"institutions">[]>([]);
+  const [syncEnabled, setSyncEnabled] = React.useState(false);
+  const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+
+  // Filters
+  const [query, setQuery] = React.useState("");
+  const [kindFilter, setKindFilter] = React.useState("all");
+  const [statusFilter, setStatusFilter] = React.useState("open");
+  const [sort, setSort] = React.useState<InvestmentSort>("value_desc");
+  const [period, setPeriod] = React.useState<PayoutPeriod>("month");
+
+  // Modals
+  const [editing, setEditing] = React.useState<Holding | null>(null);
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [valuing, setValuing] = React.useState<Holding | null>(null);
+  const [payingOut, setPayingOut] = React.useState<Holding | null>(null);
+  const [closing, setClosing] = React.useState<Holding | null>(null);
+  const [linking, setLinking] = React.useState<Holding | null>(null);
+  const [deleting, setDeleting] = React.useState<Holding | null>(null);
+
+  React.useEffect(() => {
+    let active = true;
+    if (!householdId) return;
+
+    async function load() {
+      /*
+       * Every response is checked for `error` SEPARATELY from "no rows".
+       * A failing query returning an empty array is what made the Transactions
+       * page render "No transactions found" for every household while the real
+       * problem was an ambiguous embed.
+       */
+      const [holdingRes, payoutRes, accountRes, institutionRes] = await Promise.all([
+        supabase.from("investments").select("*").eq("household_id", householdId),
+        supabase
+          .from("investment_payouts")
+          .select("*")
+          .eq("household_id", householdId)
+          .order("date", { ascending: false }),
+        /*
+         * EVERY account, archived and deleted ones included.
+         *
+         * Filtering them out broke two things. It violates the standing rule
+         * that unavailable accounts are SHOWN greyed with a reason chip and
+         * never hidden — a vanished account reads as data loss. And it silently
+         * re-pointed money: a holding funded from an account later archived
+         * came back with nothing selected, so editing its NAME forced you to
+         * pick a different account, moving a historical debit somewhere it
+         * never happened. `accountSelectOptions` disables them.
+         */
+        supabase
+          .from("accounts")
+          .select("*, institutions(*)")
+          .eq("household_id", householdId)
+          .order("created_at"),
+        supabase.from("institutions").select("*"),
+      ]);
+
+      if (!active) return;
+
+      const firstError =
+        holdingRes.error || payoutRes.error || accountRes.error || institutionRes.error;
+      if (firstError) {
+        setLoadError(firstError.message);
+        setLoading(false);
+        return;
+      }
+
+      setHoldings(holdingRes.data ?? []);
+      setPayouts(payoutRes.data ?? []);
+      setAccounts((accountRes.data ?? []) as unknown as AccountWithInstitution[]);
+      setInstitutions(institutionRes.data ?? []);
+      setLoadError(null);
+
+      try {
+        const integrations = await loadIntegrations(supabase, householdId);
+        if (active) setSyncEnabled(integrations.sync_investments);
+      } catch {
+        // A missing integrations row is the default state, not a failure. Any
+        // other problem here must not stop the holdings from rendering.
+        if (active) setSyncEnabled(false);
+      }
+
+      setLoading(false);
+    }
+
+    load();
+    return () => {
+      active = false;
+    };
+  }, [householdId, refreshKey, supabase]);
+
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  const payoutsByHolding = React.useMemo(() => {
+    const map: Record<string, Payout[]> = {};
+    for (const payout of payouts) {
+      (map[payout.investment_id] ??= []).push(payout);
+    }
+    return map;
+  }, [payouts]);
+
+  const institutionById = React.useMemo(
+    () => new Map(institutions.map((i) => [i.id, i])),
+    [institutions],
+  );
+
+  const totals = React.useMemo(
+    () => portfolioTotals(holdings, payoutsByHolding),
+    [holdings, payoutsByHolding],
+  );
+
+  const visible = React.useMemo(() => {
+    const filtered = holdings.filter((h) => {
+      if (kindFilter !== "all" && h.kind !== kindFilter) return false;
+      if (statusFilter === "open" && !isHoldingOpen(h)) return false;
+      if (statusFilter === "closed" && isHoldingOpen(h)) return false;
+      if (statusFilter !== "all" && statusFilter !== "open" && statusFilter !== "closed") {
+        if (h.status !== statusFilter) return false;
+      }
+      return matchesQuery(h, query, institutionById.get(h.institution_id ?? "")?.name);
+    });
+    return sortInvestments(filtered, payoutsByHolding, sort);
+  }, [holdings, kindFilter, statusFilter, query, sort, payoutsByHolding, institutionById]);
+
+  /* Profit rolled up, over the holdings currently in view — so filtering to
+     "gold" answers "what has gold paid me", not "what has everything paid me". */
+  const visibleIds = React.useMemo(() => new Set(visible.map((h) => h.id)), [visible]);
+  const payoutBuckets = React.useMemo(
+    () => payoutsByPeriod(payouts.filter((p) => visibleIds.has(p.investment_id)), period),
+    [payouts, visibleIds, period],
+  );
+
+  const activeFilterCount =
+    (kindFilter !== "all" ? 1 : 0) + (statusFilter !== "open" ? 1 : 0) + (sort !== "value_desc" ? 1 : 0);
+
+  const handleReopen = async (holding: Holding) => {
+    try {
+      await reopenInvestment(supabase, holding);
+      showToast({
+        type: "success",
+        title: "Back in your active holdings",
+        description: holding.exit_transaction_id
+          ? "The money that came back has been taken out of that account again."
+          : "The exit has been undone.",
+      });
+      refresh();
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not reopen it",
+        description: err instanceof Error ? err.message : "Something went wrong.",
+      });
+    }
+  };
+
+  const handleDelete = async (cascade: boolean) => {
+    if (!deleting) return;
+    try {
+      await deleteInvestment(supabase, deleting, cascade);
+      showToast({ type: "success", title: "Holding removed", description: `"${deleting.name}" is gone.` });
+      setDeleting(null);
+      refresh();
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not remove it",
+        description: err instanceof Error ? err.message : "Something went wrong.",
+      });
+    }
+  };
+
+  /*
+   * What deleting this holding would also take with it.
+   *
+   * Only rows that exist: a standalone holding lists nothing, and the delete
+   * modal correctly falls back to a plain confirm rather than showing an empty
+   * "linked records" heading.
+   */
+  const deletingLinks = React.useMemo(() => {
+    if (!deleting) return [];
+    const links: { kind: string; label: string }[] = [];
+    if (deleting.funding_transaction_id) {
+      links.push({
+        kind: "Account entry",
+        label: `Invested in ${deleting.name} · ${formatPKR(Number(deleting.principal_paisa))}`,
+      });
+    }
+    if (deleting.exit_transaction_id) {
+      links.push({
+        kind: "Account entry",
+        label: `Withdrew from ${deleting.name} · ${formatPKR(Number(deleting.exit_value_paisa ?? 0))}`,
+      });
+    }
+    const paid = (payoutsByHolding[deleting.id] ?? []).filter((p) => p.transaction_id);
+    if (paid.length > 0) {
+      links.push({
+        kind: paid.length === 1 ? "Income entry" : `${paid.length} income entries`,
+        label: `Profit from ${deleting.name}`,
+      });
+    }
+    return links;
+  }, [deleting, payoutsByHolding]);
+
+  const deletingAccount = deleting?.account_id
+    ? accounts.find((a) => a.id === deleting.account_id)
+    : undefined;
+
+  /* ---------------------------------------------------------------------- */
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
             Investments
           </h1>
           <p className="text-muted mt-0.5 text-[12.5px]">
-            National Savings certificates, prize bonds, PSX holdings and mutual
-            funds.
+            Certificates, shares, gold, plots and business stakes — what you own,
+            what it has earned, and when it comes back.
           </p>
         </div>
 
@@ -37,54 +335,586 @@ export default function InvestmentsVaultPage() {
             {
               label: "Add holding",
               shortLabel: "Holding",
-              hint: "Not wired up yet — this module is still read-only",
+              hint: "Anything you own that is not sitting in a bank account",
               icon: Plus,
               tone: "primary",
-              onClick: () => {},
+              disabled: readOnly,
+              onClick: () => {
+                setEditing(null);
+                setAddOpen(true);
+              },
             },
           ]}
         />
       </div>
 
-      {/* Hero Summary Card */}
-      <div className="bg-navy-900 text-on-navy rounded-panel p-6 shadow-md relative overflow-hidden">
-        <div className="relative z-10 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <span className="text-xs uppercase font-bold tracking-wider text-brass">Total Investment Net Worth</span>
-            <span className="font-display text-3xl font-bold block mt-1 text-on-navy">
-              {formatPKR(totalVaultPaisa)}
+      {loadError && (
+        <div className="border-loss/25 bg-loss/8 text-loss rounded-panel border px-4 py-3 text-[12.5px]">
+          Could not load your investments: {loadError}
+        </div>
+      )}
+
+      {/* ---- Portfolio hero ------------------------------------------------ */}
+      <Reveal>
+        <div className="bg-navy-900 text-on-navy rounded-panel relative overflow-hidden p-6 shadow-md">
+          <div
+            aria-hidden
+            className="bg-brass/12 pointer-events-none absolute -right-16 -top-20 size-56 rounded-full blur-3xl"
+          />
+
+          <div className="relative z-10">
+            <span className="text-brass text-[10px] font-bold uppercase tracking-[0.16em]">
+              What your holdings are worth
             </span>
+            <p className="font-display tnum mt-1 text-3xl font-bold">
+              {formatPKR(totals.valuePaisa)}
+            </p>
+
+            <div className="border-navy-800 mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t pt-4 sm:grid-cols-4">
+              <HeroStat label="You put in" value={formatPKR(totals.investedPaisa)} />
+              <HeroStat
+                label="Value change"
+                value={formatPKR(totals.capitalPaisa)}
+                tone={totals.capitalPaisa >= 0 ? "gain" : "loss"}
+              />
+              <HeroStat
+                label="Profit received"
+                value={formatPKR(totals.incomePaisa)}
+                tone={totals.incomePaisa > 0 ? "gain" : undefined}
+              />
+              <HeroStat
+                label="Holdings"
+                value={`${totals.openCount} open`}
+                sub={totals.closedCount > 0 ? `${totals.closedCount} closed` : undefined}
+              />
+            </div>
+
+            {/*
+              The honest line about what the dashboard does and does not include.
+              With the bridge shut, the app never took this money out of any
+              account — so adding it into dashboard net worth would count the same
+              rupees twice. Saying so here is cheaper than the support question.
+            */}
+            <p className="text-on-navy-muted mt-4 text-[11px] leading-relaxed">
+              {syncEnabled ? (
+                <>
+                  <Link2 size={11} className="mb-px me-1 inline" />
+                  Account syncing is <span className="text-on-navy font-medium">on</span> — new
+                  holdings come out of the account you name, and the money shows up
+                  on your dashboard as savings moving rather than spending.
+                </>
+              ) : (
+                <>
+                  Kept separate from your daily money. Your dashboard net worth
+                  counts your accounts only, so nothing here is double-counted.
+                  Turn on syncing in Settings → Preferences to link them.
+                </>
+              )}
+            </p>
+          </div>
+        </div>
+      </Reveal>
+
+      {/* ---- Search and filters -------------------------------------------- */}
+      {holdings.length > 0 && (
+        <div className="space-y-3">
+          <Input
+            placeholder="Search by name, type, note — try “gold” or “Behbood”"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            prefixIcon={<Search size={15} />}
+            aria-label="Search holdings"
+          />
+
+          <FilterBar
+            activeCount={activeFilterCount}
+            onClear={() => {
+              setKindFilter("all");
+              setStatusFilter("open");
+              setSort("value_desc");
+            }}
+          >
+            <RichSelect
+              label="Type"
+              value={kindFilter}
+              onChange={setKindFilter}
+              searchable
+              options={[
+                { value: "all", label: "Every type" },
+                ...INVESTMENT_KINDS.map((k) => ({
+                  value: k.key,
+                  label: k.label,
+                  secondaryLabel: k.labelUr,
+                })),
+              ]}
+            />
+            <RichSelect
+              label="Status"
+              value={statusFilter}
+              onChange={setStatusFilter}
+              options={[
+                { value: "open", label: "Still held", description: "Active and matured" },
+                { value: "closed", label: "Closed", description: "Sold or withdrawn" },
+                { value: "matured", label: "Matured only", description: "Term is up, money not back yet" },
+                { value: "all", label: "Everything" },
+              ]}
+            />
+            <RichSelect
+              label="Sort by"
+              value={sort}
+              onChange={(v) => setSort(v as InvestmentSort)}
+              options={INVESTMENT_SORTS.map((s) => ({ value: s.key, label: s.label }))}
+            />
+          </FilterBar>
+        </div>
+      )}
+
+      {/* ---- Holdings ------------------------------------------------------ */}
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-surface border-border rounded-panel shimmer h-44 border" />
+          ))}
+        </div>
+      ) : holdings.length === 0 ? (
+        <EmptyState
+          title="Nothing recorded yet"
+          description="Add the Behbood certificates, the tola of gold, the plot file, the shares — anything you own that is not in a bank account. Nothing here touches your balances unless you ask it to."
+          action={
+            <Button variant="primary" onClick={() => setAddOpen(true)} disabled={readOnly}>
+              Add your first holding
+            </Button>
+          }
+        />
+      ) : visible.length === 0 ? (
+        <div className="bg-surface border-border rounded-panel text-muted border p-8 text-center text-xs">
+          Nothing matches that. Try clearing the filters.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+          {visible.map((holding, i) => (
+            <Reveal key={holding.id} index={i}>
+              <HoldingCard
+                holding={holding}
+                payouts={payoutsByHolding[holding.id] ?? []}
+                institution={institutionById.get(holding.institution_id ?? "") ?? null}
+                readOnly={readOnly}
+                syncEnabled={syncEnabled}
+                onEdit={() => setEditing(holding)}
+                onDelete={() => setDeleting(holding)}
+                onRevalue={() => setValuing(holding)}
+                onPayout={() => setPayingOut(holding)}
+                onClose={() => setClosing(holding)}
+                onLink={() => setLinking(holding)}
+                onReopen={() => void handleReopen(holding)}
+              />
+            </Reveal>
+          ))}
+        </div>
+      )}
+
+      {/* ---- Profit over time ---------------------------------------------- */}
+      {payoutBuckets.length > 0 && (
+        <div className="border-border border-t pt-6">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-display text-[15px] font-semibold tracking-[-0.01em]">
+                Profit received
+              </h2>
+              <p className="text-muted text-[11.5px]">
+                Cash that actually arrived, over{" "}
+                {visible.length === holdings.length ? "all holdings" : "the holdings shown above"}.
+                Reinvested profit is listed apart, because you could not spend it.
+              </p>
+            </div>
+
+            <div className="border-border bg-surface-subtle rounded-control flex items-center gap-1 border p-1 text-[11px]">
+              {PERIODS.map((p) => (
+                <button
+                  key={p.key}
+                  type="button"
+                  onClick={() => setPeriod(p.key)}
+                  className={`rounded-control px-2.5 py-1 font-medium transition-colors ${
+                    period === p.key
+                      ? "bg-navy-900 text-on-navy dark:bg-brass dark:text-navy-900"
+                      : "text-muted hover:text-foreground"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <span className="bg-gain-subtle text-gain border border-gain/20 text-xs px-3 py-1 rounded-full font-bold">
-              + 14.6% Avg Annual Yield
-            </span>
+          <div className="bg-surface border-border rounded-panel divide-border divide-y overflow-hidden border shadow-xs">
+            {payoutBuckets.slice(0, 12).map((bucket) => (
+              <div key={bucket.key} className="flex items-center justify-between gap-4 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="text-foreground truncate text-[12.5px] font-medium">{bucket.label}</p>
+                  <p className="text-muted text-[11px]">
+                    <span className="tnum">{bucket.count}</span>{" "}
+                    {bucket.count === 1 ? "payment" : "payments"}
+                    {bucket.reinvestedPaisa > 0 && (
+                      <>
+                        {" · "}
+                        <span className="tnum">{formatPKRCompact(bucket.reinvestedPaisa)}</span>{" "}
+                        reinvested
+                      </>
+                    )}
+                  </p>
+                </div>
+                <span
+                  className={`tnum font-display shrink-0 text-sm font-semibold ${
+                    bucket.receivedPaisa > 0 ? "text-gain" : "text-muted"
+                  }`}
+                >
+                  {bucket.receivedPaisa > 0 ? formatPKR(bucket.receivedPaisa) : "—"}
+                </span>
+              </div>
+            ))}
           </div>
+
+          {payoutBuckets.length > 12 && (
+            <p className="text-faint mt-2 text-[11px]">
+              Showing the most recent 12 of {payoutBuckets.length} periods.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ---- Modals -------------------------------------------------------- */}
+      <InvestmentModal
+        isOpen={addOpen || editing !== null}
+        onClose={() => {
+          setAddOpen(false);
+          setEditing(null);
+        }}
+        onSaved={refresh}
+        householdId={householdId}
+        holding={editing}
+        accounts={accounts}
+        institutions={institutions}
+        syncEnabled={syncEnabled}
+      />
+
+      <ValuationModal
+        isOpen={valuing !== null}
+        onClose={() => setValuing(null)}
+        onSaved={refresh}
+        holding={valuing}
+      />
+
+      <PayoutModal
+        isOpen={payingOut !== null}
+        onClose={() => setPayingOut(null)}
+        onSaved={refresh}
+        holding={payingOut}
+        accounts={accounts}
+        syncEnabled={syncEnabled}
+        payouts={payingOut ? (payoutsByHolding[payingOut.id] ?? []) : []}
+      />
+
+      <CloseInvestmentModal
+        isOpen={closing !== null}
+        onClose={() => setClosing(null)}
+        onSaved={refresh}
+        holding={closing}
+        accounts={accounts}
+        syncEnabled={syncEnabled}
+      />
+
+      <LinkHoldingModal
+        isOpen={linking !== null}
+        onClose={() => setLinking(null)}
+        onSaved={refresh}
+        holding={linking}
+        accounts={accounts}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={handleDelete}
+        title="Remove this holding?"
+        recordLabel={deleting?.name ?? ""}
+        recordMeta={
+          deleting
+            ? `${investmentKind(deleting.kind).label} · ${formatPKR(Number(deleting.principal_paisa))} put in`
+            : undefined
+        }
+        linkedRefs={deletingLinks}
+        /*
+         * Defaults to UNCHECKED, unlike a transfer leg. The rupees genuinely did
+         * leave the bank; deleting a record here should not quietly put them
+         * back unless that is what the user means.
+         */
+        defaultCascade={false}
+        cascadeLabel="Also remove the account entries this holding created"
+        cascadeHint="The account entries stay. The money really did move, so your balances are unchanged — those rows just stop pointing at a holding."
+        balanceImpact={
+          deleting?.funding_transaction_id && deletingAccount
+            ? {
+                accountName: deletingAccount.name,
+                fromPaisa: Number(deletingAccount.balance_paisa),
+                toPaisa: Number(deletingAccount.balance_paisa) + Number(deleting.principal_paisa),
+              }
+            : undefined
+        }
+        confirmLabel="Remove holding"
+      />
+    </div>
+  );
+}
+
+/* ========================================================================== *
+ * Pieces
+ * ========================================================================== */
+
+function HeroStat({
+  label,
+  value,
+  sub,
+  tone,
+}: {
+  label: string;
+  value: string;
+  sub?: string;
+  tone?: "gain" | "loss";
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-on-navy-muted text-[10px] font-semibold uppercase tracking-widest">
+        {label}
+      </p>
+      <p
+        className={`tnum font-display mt-1 truncate text-[15px] font-semibold ${
+          tone === "gain" ? "text-gain" : tone === "loss" ? "text-loss" : "text-on-navy"
+        }`}
+      >
+        {value}
+      </p>
+      {sub && <p className="text-on-navy-muted text-[10.5px]">{sub}</p>}
+    </div>
+  );
+}
+
+function HoldingCard({
+  holding,
+  payouts,
+  institution,
+  readOnly,
+  syncEnabled,
+  onEdit,
+  onDelete,
+  onRevalue,
+  onPayout,
+  onClose,
+  onLink,
+  onReopen,
+}: {
+  holding: Holding;
+  payouts: Payout[];
+  institution: Tables<"institutions"> | null;
+  readOnly: boolean;
+  syncEnabled: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+  onRevalue: () => void;
+  onPayout: () => void;
+  onClose: () => void;
+  onLink: () => void;
+  onReopen: () => void;
+}) {
+  const def = investmentKind(holding.kind);
+  const Icon = KIND_ICON[def.icon] ?? Boxes;
+  const open = isHoldingOpen(holding);
+
+  const { capitalPaisa, incomePaisa, totalPaisa } = investmentReturn(holding, payouts);
+  const fraction = investmentReturnFraction(holding, payouts);
+  const annualised = annualisedReturnFraction(holding, payouts);
+  const untilExit = daysToExit(holding);
+  const projected = projectedAnnualIncomePaisa(holding);
+
+  return (
+    <div className="bg-surface border-border rounded-panel group/card focus-within:border-brass/40 relative flex h-full flex-col border p-5 shadow-xs transition-colors">
+      {/* Head */}
+      <div className="flex items-start gap-3">
+        {institution ? (
+          <MerchantMark
+            name={institution.short_name || institution.name}
+            brand={institution.brand_color}
+            logo={institutionLogo(institution.logo_path) ?? undefined}
+            awaitingLogo={!institution.logo_path}
+            size={34}
+          />
+        ) : (
+          <span className="bg-brass/10 text-brass-strong flex size-8.5 shrink-0 items-center justify-center rounded-card">
+            <Icon size={17} strokeWidth={1.75} />
+          </span>
+        )}
+
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display text-foreground truncate text-[13.5px] font-semibold">
+            {holding.name}
+          </h3>
+          <p className="text-muted truncate text-[11px]">
+            {def.label}
+            {holding.units !== null && (
+              <>
+                {" · "}
+                <span className="tnum">{Number(holding.units)}</span> {holding.unit_label}
+              </>
+            )}
+            {!open && ` · ${holding.status === "sold" ? "Sold" : "Closed"}`}
+          </p>
+        </div>
+
+        {!readOnly && (
+          <RowActions onEdit={onEdit} onDelete={onDelete} editLabel="Edit holding" deleteLabel="Remove holding" />
+        )}
+      </div>
+
+      {/* Money */}
+      <div className="mt-4 flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-muted text-[10px] font-semibold uppercase tracking-widest">
+            {open ? "Worth now" : "Came back"}
+          </p>
+          <p className="font-display tnum text-foreground mt-0.5 truncate text-lg font-bold">
+            {formatPKR(open ? Number(holding.current_value_paisa) : Number(holding.exit_value_paisa ?? 0))}
+          </p>
+        </div>
+
+        <div className="shrink-0 text-right">
+          <p
+            className={`tnum text-[12.5px] font-semibold ${
+              totalPaisa > 0 ? "text-gain" : totalPaisa < 0 ? "text-loss" : "text-muted"
+            }`}
+          >
+            {totalPaisa >= 0 ? "+" : "−"}
+            {formatPKRCompact(Math.abs(totalPaisa))}
+          </p>
+          <p className="text-muted tnum text-[10.5px]">
+            {fraction !== null ? formatPercent(fraction) : "—"}
+            {annualised !== null && (
+              <span className="text-faint"> · {formatPercent(annualised)}/yr</span>
+            )}
+          </p>
         </div>
       </div>
 
-      {/* Holdings List */}
-      <div className="bg-surface border border-border rounded-panel overflow-hidden shadow-sm divide-y divide-border">
-        {holdings.map((h) => (
-          <div key={h.id} className="p-4 flex items-center justify-between gap-4 text-xs">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-full bg-brass/10 text-brass flex items-center justify-center font-bold">
-                <TrendingUp size={16} />
-              </div>
-              <div>
-                <h4 className="font-bold text-foreground">{h.name}</h4>
-                <span className="text-muted text-[11px]">{h.type}</span>
-              </div>
-            </div>
+      {/* The two halves of the return, kept apart. A Behbood certificate is flat
+          on capital and everything on income; shares are the reverse. Summing
+          them into one figure hides which kind of thing you are holding. */}
+      <dl className="border-border text-muted mt-3 grid grid-cols-3 gap-2 border-t pt-3 text-[10.5px]">
+        <div>
+          <dt className="font-medium">Put in</dt>
+          <dd className="tnum text-foreground-2 font-semibold">
+            {formatPKRCompact(Number(holding.principal_paisa))}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium">Value change</dt>
+          <dd className={`tnum font-semibold ${capitalPaisa >= 0 ? "text-foreground-2" : "text-loss"}`}>
+            {capitalPaisa === 0 ? "—" : formatPKRCompact(capitalPaisa)}
+          </dd>
+        </div>
+        <div>
+          <dt className="font-medium">Profit paid</dt>
+          <dd className={`tnum font-semibold ${incomePaisa > 0 ? "text-gain" : "text-foreground-2"}`}>
+            {incomePaisa === 0 ? "—" : formatPKRCompact(incomePaisa)}
+          </dd>
+        </div>
+      </dl>
 
-            <div className="text-right">
-              <span className="font-display font-bold text-foreground block text-sm">{formatPKR(h.valPaisa)}</span>
-              <span className="text-gain font-semibold text-[11px]">{h.profitRate}</span>
-            </div>
-          </div>
-        ))}
+      {/* Status strip */}
+      <div className="mt-3 flex flex-wrap items-center gap-1.5">
+        {untilExit !== null && open && (
+          <Chip tone={untilExit < 0 ? "loss" : untilExit <= 30 ? "brass" : "plain"}>
+            {untilExit < 0
+              ? `Due back ${Math.abs(untilExit)}d ago`
+              : untilExit === 0
+                ? "Due back today"
+                : `Back in ${untilExit}d`}
+          </Chip>
+        )}
+        {projected !== null && (
+          <Chip tone="plain">Expects {formatPKRCompact(projected)}/yr</Chip>
+        )}
+        {holding.funding_transaction_id ? (
+          <Chip tone="plain">
+            <Link2 size={9} className="me-0.5 inline" />
+            Linked to an account
+          </Chip>
+        ) : (
+          syncEnabled &&
+          open && (
+            <Chip tone="plain">
+              <Wallet size={9} className="me-0.5 inline" />
+              Not linked
+            </Chip>
+          )
+        )}
       </div>
+
+      {/* Actions */}
+      {!readOnly && (
+        <div className="mt-4 flex flex-wrap gap-1.5">
+          {open ? (
+            <>
+              <CardAction icon={Coins} label="Update value" onClick={onRevalue} />
+              <CardAction icon={Banknote} label="Profit" onClick={onPayout} />
+              <CardAction icon={TrendingUp} label="Cash in" onClick={onClose} />
+              {syncEnabled && !holding.funding_transaction_id && (
+                <CardAction icon={Link2} label="Link" onClick={onLink} />
+              )}
+            </>
+          ) : (
+            // Closing a holding used to be one-way, so a mis-tap on "Cash in"
+            // was unrecoverable — and it may have written a real credit to an
+            // account, which reopening takes back out.
+            <CardAction icon={Undo2} label="Reopen" onClick={onReopen} />
+          )}
+        </div>
+      )}
     </div>
+  );
+}
+
+function Chip({ children, tone }: { children: React.ReactNode; tone: "plain" | "brass" | "loss" }) {
+  const toneClass =
+    tone === "loss"
+      ? "border-loss/25 bg-loss/8 text-loss"
+      : tone === "brass"
+        ? "border-brass/25 bg-brass/10 text-brass-strong"
+        : "border-border bg-surface-subtle text-muted";
+
+  return (
+    <span
+      className={`inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] leading-none font-medium ${toneClass}`}
+    >
+      {children}
+    </span>
+  );
+}
+
+function CardAction({
+  icon: Icon,
+  label,
+  onClick,
+}: {
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="border-border bg-surface-subtle text-foreground-2 hover:border-brass/40 hover:text-foreground inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+    >
+      <Icon size={12} strokeWidth={1.9} />
+      {label}
+    </button>
   );
 }

@@ -30,6 +30,9 @@ Hand-copying SQL here instead would drift from what is actually applied.
 | `read_only_workspace_policies` | Split the single `FOR ALL` policy on 12 tenant tables into select + insert/update/delete, gating only the writes |
 | `workspace_effective_plan` | `household_plan_limits`, `household_plan_code`, and the `workspace_access` view (`security_invoker`) |
 | `revoke_plan_helpers_from_anon` | Removed the default `PUBLIC` execute grant the new helpers were created with |
+| `m5_investments_and_wealth_ledger_sync` | `investments`, `investment_valuations`, `investment_payouts`, `household_integrations`. `sync_investment_current_value` trigger. Four policies each |
+| `enforce_tenant_scoped_foreign_keys` | **Security fix.** Replaced 14 single-column FKs with composite `(fk, household_id)` keys. See "A foreign key is part of the tenant boundary" below |
+| `index_tenant_scoped_foreign_keys` | Child-side indexes for those 14 composite keys, so a parent delete is not a sequential scan |
 
 Modules M2 onward write their own migrations when they start. Do not write
 schema for a module before building it.
@@ -209,6 +212,63 @@ matters — the in-database test can pass while the API is still broken:
 ---
 
 ## Traps
+
+**A foreign key is part of the tenant boundary, and RLS does not check it.**
+
+Every tenant policy here tests `household_id` on the row being written and
+nothing else. So a row carrying YOUR household_id could name a foreign key
+belonging to SOMEONE ELSE'S household, and every policy passed. Signed in as a
+real user of another household:
+
+```sql
+insert into transactions (household_id, account_id, amount_paisa, type, date)
+values (my_household, their_account, -100000, 'expense', current_date);
+-- accepted. sync_account_balance is SECURITY DEFINER, so it took Rs 1,000
+-- off a stranger's balance: 505000 -> 405000.
+```
+
+The attacker could not **read** that account — `select` returned zero rows — but
+could **write** to it, which is worse, because it is invisible from both sides.
+The same shape let an `investment_valuations` row rewrite another household's
+holding from Rs 10,00,000 to Rs 0.01 through the value trigger.
+
+The fix is declarative, not another trigger: the foreign key itself carries the
+tenant, so a stranger's row cannot satisfy it and no policy, ordering or future
+code path can bypass it.
+
+```sql
+alter table accounts add constraint accounts_id_household_key unique (id, household_id);
+
+alter table transactions add constraint transactions_account_id_fkey
+  foreign key (account_id, household_id)
+  references accounts (id, household_id) on delete cascade;
+```
+
+Two things to know when doing this again:
+
+- `household_id` is NOT NULL, so a plain `ON DELETE SET NULL` fails — it would
+  try to blank it too. Use the **column-list** form, `ON DELETE SET NULL
+  (transfer_account_id)`, which needs PG 15+ (we are on 17.6).
+- Index the child side. Without it, deleting one account sequentially scans
+  every transaction the household owns.
+
+`categories` and `merchants` are deliberately excluded: their platform rows are
+shared across every household by design, and a composite key would break exactly
+the sharing they exist for. Tables with no `household_id` of their own
+(`transaction_splits`, `task_checklist_items`, `event_budget_*`) inherit tenancy
+from their parent through an `EXISTS` in their own policies, so they were never
+exposed.
+
+Re-run after any migration that adds a foreign key between two tenant tables:
+
+```sql
+select c.conrelid::regclass as child, a.attname, c.confrelid::regclass as parent
+from pg_constraint c
+join unnest(c.conkey) with ordinality k(attnum, ord) on true
+join pg_attribute a on a.attrelid = c.conrelid and a.attnum = k.attnum
+where c.contype = 'f' and array_length(c.conkey, 1) = 1
+  and c.confrelid::regclass::text in ('accounts','transactions','investments','tasks');
+```
 
 **After any migration, PostgREST needs its schema cache reloaded** or every
 endpoint returns a bodyless `404` even though the tables, grants and policies are

@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import {
   ArrowUpRight,
+  Cake,
   CalendarDays,
   CheckCircle2,
   ChevronLeft,
@@ -20,6 +21,7 @@ import { AddEventModal } from "@/components/add-event-modal";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
+import { birthdaysBetween, turningAge, type Contact } from "@/lib/contacts";
 import { formatHijri, formatPKR } from "@/lib/format";
 import { todayISO } from "@/lib/ledger";
 import { cn } from "@/lib/utils";
@@ -39,7 +41,7 @@ type CalendarTask = Tables<"tasks">;
  */
 type DayItem = {
   id: string;
-  kind: "task" | "event";
+  kind: "task" | "event" | "birthday";
   title: string;
   color: string;
   done: boolean;
@@ -113,6 +115,7 @@ export default function CalendarPage() {
   const [view, setView] = React.useState<CalendarView>("month");
   const [events, setEvents] = React.useState<CalendarEvent[]>([]);
   const [tasks, setTasks] = React.useState<CalendarTask[]>([]);
+  const [contacts, setContacts] = React.useState<Contact[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [addModalOpen, setAddModalOpen] = React.useState(false);
   const [selectedDateStr, setSelectedDateStr] = React.useState("");
@@ -133,7 +136,7 @@ export default function CalendarPage() {
        * mis-tap on the wrong day would move a bank balance. Everything on this
        * screen links back to Tasks instead.
        */
-      const [evRes, taskRes] = await Promise.all([
+      const [evRes, taskRes, contactRes] = await Promise.all([
         supabase
           .from("calendar_events")
           .select("*")
@@ -144,11 +147,26 @@ export default function CalendarPage() {
           .select("*")
           .eq("household_id", householdId)
           .order("due_date", { ascending: true }),
+        /*
+         * Birthdays are DERIVED, never stored as calendar rows.
+         *
+         * A birthday recurs every year forever, so writing it into
+         * `calendar_events` would mean generating rows into infinity and
+         * regenerating them whenever a date is corrected. The contact row is
+         * the single source; the grid computes the occurrence for whichever
+         * year it is showing.
+         */
+        supabase
+          .from("contacts")
+          .select("*")
+          .eq("household_id", householdId)
+          .not("birthday", "is", null),
       ]);
 
       if (!active) return;
       if (evRes.data) setEvents(evRes.data);
       if (taskRes.data) setTasks(taskRes.data);
+      if (contactRes.data) setContacts(contactRes.data);
       setLoading(false);
     }
 
@@ -233,11 +251,34 @@ export default function CalendarPage() {
       });
     }
 
+    // The grid draws six weeks, so the window is the whole 42-day block rather
+    // than the calendar month — a birthday in the visible tail of the previous
+    // month has to appear too.
+    for (const { contact, date } of birthdaysBetween(
+      contacts,
+      days[0].key,
+      days[days.length - 1].key,
+    )) {
+      const age = turningAge(contact.birthday!);
+      push(date, {
+        id: `birthday-${contact.id}-${date}`,
+        kind: "birthday",
+        title: age !== null ? `${contact.name} turns ${age}` : `${contact.name}'s birthday`,
+        color: TYPE_COLOR.birthday,
+        done: false,
+        overdue: false,
+      });
+    }
+
+    // Tasks first, then events, then birthdays. Only two rows show before the
+    // overflow counter, and what you have to DO outranks what merely happens.
+    const rank = (kind: DayItem["kind"]) =>
+      kind === "task" ? 0 : kind === "event" ? 1 : 2;
     for (const list of map.values()) {
-      list.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "task" ? -1 : 1));
+      list.sort((a, b) => rank(a.kind) - rank(b.kind));
     }
     return map;
-  }, [events, tasks, today]);
+  }, [events, tasks, contacts, days, today]);
 
   const monthItemCount = days.reduce(
     (n, d) => (d.inMonth ? n + (itemsByDay.get(d.key)?.length ?? 0) : n),
@@ -298,9 +339,36 @@ export default function CalendarPage() {
       });
     }
 
+    /*
+     * The agenda spans a YEAR either side, not the six visible weeks.
+     *
+     * It is a list rather than a grid, so it is not bounded by the month on
+     * screen — and it is the view a phone opens on. Bounding it to the grid's
+     * window would have made a birthday appear in the month view and vanish
+     * from the agenda beside it, which is two answers to one question.
+     */
+    const agendaFrom = iso(new Date(year - 1, month, 1));
+    const agendaTo = iso(new Date(year + 1, month + 1, 0));
+
+    for (const { contact, date } of birthdaysBetween(contacts, agendaFrom, agendaTo)) {
+      const age = turningAge(contact.birthday!);
+      rows.push({
+        date,
+        time: null,
+        item: {
+          id: `birthday-${contact.id}-${date}`,
+          kind: "birthday",
+          title: age !== null ? `${contact.name} turns ${age}` : `${contact.name}'s birthday`,
+          color: TYPE_COLOR.birthday,
+          done: false,
+          overdue: false,
+        },
+      });
+    }
+
     rows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
     return rows;
-  }, [events, tasks, today]);
+  }, [events, tasks, contacts, year, month, today]);
 
   // Upcoming first — an agenda that opens on last year's entries is a log, not a plan.
   const upcoming = agenda.filter((r) => r.date >= today);
@@ -511,6 +579,7 @@ export default function CalendarPage() {
         onClose={() => setOpenDayKey(null)}
         events={events}
         tasks={tasks}
+        contacts={contacts}
         today={today}
         onAddEvent={(dateStr) => {
           setOpenDayKey(null);
@@ -597,6 +666,7 @@ function DayDetailModal({
   onClose,
   events,
   tasks,
+  contacts,
   today,
   onAddEvent,
 }: {
@@ -604,6 +674,7 @@ function DayDetailModal({
   onClose: () => void;
   events: CalendarEvent[];
   tasks: CalendarTask[];
+  contacts: Contact[];
   today: string;
   onAddEvent: (dateStr: string) => void;
 }) {
@@ -611,6 +682,7 @@ function DayDetailModal({
   const dayEvents = dateKey
     ? events.filter((e) => iso(new Date(e.start_at)) === dateKey)
     : [];
+  const dayBirthdays = dateKey ? birthdaysBetween(contacts, dateKey, dateKey) : [];
 
   const when = dateKey
     ? (() => {
@@ -633,13 +705,15 @@ function DayDetailModal({
           : ""
       }
       subtitle={
-        dayTasks.length + dayEvents.length === 0
+        dayTasks.length + dayEvents.length + dayBirthdays.length === 0
           ? "Nothing on this day"
           : [
               dayTasks.length > 0 &&
                 `${dayTasks.length} ${dayTasks.length === 1 ? "task" : "tasks"}`,
               dayEvents.length > 0 &&
                 `${dayEvents.length} ${dayEvents.length === 1 ? "event" : "events"}`,
+              dayBirthdays.length > 0 &&
+                `${dayBirthdays.length} ${dayBirthdays.length === 1 ? "birthday" : "birthdays"}`,
             ]
               .filter(Boolean)
               .join(" · ")
@@ -734,6 +808,49 @@ function DayDetailModal({
               Shown here, completed in Tasks — a paid task writes a real entry,
               so it is confirmed on the screen that shows the amount and account.
             </p>
+          </section>
+        )}
+
+        {dayBirthdays.length > 0 && (
+          <section>
+            <p className="text-muted mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-[0.12em]">
+              <Cake size={11} />
+              Birthdays
+            </p>
+            <ul className="space-y-1.5">
+              {dayBirthdays.map(({ contact }) => {
+                const color = TYPE_COLOR.birthday;
+                const age = turningAge(contact.birthday!);
+                return (
+                  <li key={contact.id}>
+                    <Link
+                      href="/contacts"
+                      className="hover:bg-surface-subtle group flex items-center gap-2.5 rounded-card border border-s-2 p-2.5 transition-colors"
+                      style={{
+                        borderColor: `color-mix(in oklab, ${color} 28%, transparent)`,
+                        borderInlineStart: `3px solid ${color}`,
+                        background: `color-mix(in oklab, ${color} 7%, transparent)`,
+                      }}
+                    >
+                      <Cake size={14} className="shrink-0" style={{ color }} />
+                      <span className="min-w-0 flex-1">
+                        <span className="text-foreground block truncate text-[12px] font-medium">
+                          {contact.name}
+                        </span>
+                        <span className="text-faint mt-0.5 block text-[10.5px]">
+                          {age !== null ? `Turning ${age}` : "Birthday"}
+                          {contact.phone && ` · ${contact.phone}`}
+                        </span>
+                      </span>
+                      <ArrowUpRight
+                        size={13}
+                        className="text-faint group-hover:text-foreground-2 shrink-0"
+                      />
+                    </Link>
+                  </li>
+                );
+              })}
+            </ul>
           </section>
         )}
 
@@ -873,6 +990,11 @@ function AgendaList({
                                 ? "Task · overdue"
                                 : "Task · due"}
                           </>
+                        ) : item.kind === "birthday" ? (
+                          <>
+                            <Cake size={10} className="shrink-0" />
+                            Birthday
+                          </>
                         ) : (
                           <>
                             <CalendarDays size={10} className="shrink-0" />
@@ -899,11 +1021,13 @@ function AgendaList({
 
               return (
                 <li key={`${item.kind}-${item.id}`}>
-                  {/* A task row leaves for Tasks; an event has nowhere further
-                      to go, so it stays a plain row rather than a dead link. */}
-                  {isTask ? (
+                  {/* A task row leaves for Tasks and a birthday for Contacts —
+                      the screens that own those records. An event has nowhere
+                      further to go, so it stays a plain row rather than a dead
+                      link. */}
+                  {isTask || item.kind === "birthday" ? (
                     <Link
-                      href="/tasks"
+                      href={isTask ? "/tasks" : "/contacts"}
                       className="hover:bg-surface-subtle flex items-center justify-between gap-4 px-5 py-3 transition-colors"
                     >
                       {row}

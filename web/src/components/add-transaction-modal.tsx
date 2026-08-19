@@ -13,6 +13,7 @@ import { MerchantMark } from "@/components/merchant-mark";
 import { accountSelectOptions } from "@/components/account-options";
 import type { AccountWithInstitution } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
+import { relationship } from "@/lib/contacts";
 import { BANKING_ACCOUNT_TYPES, todayISO } from "@/lib/ledger";
 import { formatPKR } from "@/lib/format";
 import type { SelectOption } from "@/components/ui/select";
@@ -44,12 +45,14 @@ export function AddTransactionModal({
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
   const [merchants, setMerchants] = React.useState<Tables<"merchants">[]>([]);
+  const [contacts, setContacts] = React.useState<Tables<"contacts">[]>([]);
 
   const [accountId, setAccountId] = React.useState("");
   const [type, setType] = React.useState<"expense" | "income">("expense");
   const [amount, setAmount] = React.useState("");
   const [categoryId, setCategoryId] = React.useState("");
   const [merchantId, setMerchantId] = React.useState("none");
+  const [contactId, setContactId] = React.useState("none");
   const [note, setNote] = React.useState("");
   // Local date. toISOString() is UTC and lands on yesterday before 05:00 PKT.
   const [date, setDate] = React.useState(todayISO);
@@ -65,7 +68,7 @@ export function AddTransactionModal({
     if (!isOpen || !householdId) return;
 
     async function loadData() {
-      const [accRes, catRes, merRes] = await Promise.all([
+      const [accRes, catRes, merRes, conRes] = await Promise.all([
         supabase
           .from("accounts")
           .select("*, institutions(*)")
@@ -79,6 +82,11 @@ export function AddTransactionModal({
           .order("sort_order")
           .order("name"),
         supabase.from("merchants").select("*").order("name", { ascending: true }),
+        supabase
+          .from("contacts")
+          .select("*")
+          .eq("household_id", householdId)
+          .order("name"),
       ]);
 
       if (active) {
@@ -91,6 +99,7 @@ export function AddTransactionModal({
           if (catRes.data.length > 0 && !categoryId) setCategoryId(catRes.data[0].id);
         }
         if (merRes.data) setMerchants(merRes.data);
+        if (conRes.data) setContacts(conRes.data);
       }
     }
 
@@ -123,6 +132,7 @@ export function AddTransactionModal({
       account_id: accountId,
       category_id: categoryId || null,
       merchant_id: merchantId === "none" ? null : merchantId,
+      contact_id: contactId === "none" ? null : contactId,
       amount_paisa: signedAmountPaisa,
       type,
       date,
@@ -145,6 +155,7 @@ export function AddTransactionModal({
 
     setAmount("");
     setNote("");
+    setContactId("none");
     onClose();
     if (onSuccess) onSuccess();
   };
@@ -167,6 +178,16 @@ export function AddTransactionModal({
           size={22}
         />
       ),
+    })),
+  ];
+
+  const contactOptions: SelectOption[] = [
+    { value: "none", label: "Nobody in particular", description: "Most everyday spending" },
+    ...contacts.map((c) => ({
+      value: c.id,
+      label: c.name,
+      description: relationship(c.relationship).label,
+      secondaryLabel: c.phone ?? undefined,
     })),
   ];
 
@@ -275,6 +296,27 @@ export function AddTransactionModal({
             options={merchantOptions}
           />
         </div>
+
+        {/*
+          WHO, as distinct from WHERE.
+
+          A merchant is a shop you bought from; a contact is a person the money
+          passed between. "Rs 5,000 to Aslam the plumber" is not a merchant
+          transaction, and until now the only place to put his name was the free
+          text note, where nothing could ever group by it. Hidden entirely when
+          the household has no contacts yet, so an empty picker never sits on
+          the form asking a question it cannot answer.
+        */}
+        {contacts.length > 0 && (
+          <RichSelect
+            label="Person (Optional)"
+            value={contactId}
+            onChange={setContactId}
+            searchable={contacts.length >= 8}
+            options={contactOptions}
+            hint="Who the money passed between. Changes nothing about the amount — it just lets Contacts show what has gone back and forth."
+          />
+        )}
 
         <Input
           label="Note / Description"

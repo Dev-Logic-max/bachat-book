@@ -1,18 +1,54 @@
 "use client";
 
 import * as React from "react";
-import { Users, Plus, Cake, Phone, Mail, Trash2 } from "lucide-react";
+import Link from "next/link";
+import {
+  ArrowDownLeft,
+  ArrowUpRight,
+  Briefcase,
+  Cake,
+  Coins,
+  KeyRound,
+  Mail,
+  Phone,
+  Plus,
+  Search,
+  ShoppingBag,
+  Smile,
+  Truck,
+  User,
+  Users,
+  Wrench,
+} from "lucide-react";
+
+import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
+import { ContactModal } from "@/components/contact-modal";
+import { EmptyState } from "@/components/empty-state";
+import { PageActions } from "@/components/page-actions";
+import { Reveal } from "@/components/reveal";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
-import { PageActions } from "@/components/page-actions";
 import { Input } from "@/components/ui/input";
-import { DatePicker } from "@/components/ui/date-picker";
-import { Select } from "@/components/ui/select";
-import { Modal } from "@/components/ui/modal";
+import { RichSelect } from "@/components/ui/select";
+import { RowActions } from "@/components/ui/row-actions";
 import { useToast } from "@/components/ui/toast";
+import {
+  RELATIONSHIPS,
+  daysUntilBirthday,
+  matchesContact,
+  relationship,
+  summariseContact,
+  turningAge,
+  type Contact,
+  type ContactMovement,
+} from "@/lib/contacts";
+import { formatPKR, formatPKRCompact } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
-import { todayISO } from "@/lib/ledger";
-import type { Tables } from "@/lib/supabase/types";
+
+/** Lucide name → component, so `lib/contacts.ts` stays JSX-free. */
+const REL_ICON: Record<string, React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>> = {
+  Users, Smile, Briefcase, Coins, Wrench, KeyRound, ShoppingBag, Truck, User,
+};
 
 export default function ContactsPage() {
   const session = useSession();
@@ -20,101 +56,113 @@ export default function ContactsPage() {
   const { showToast } = useToast();
 
   const householdId = session.household?.id || "";
+  const readOnly = session.workspace ? !session.workspace.is_active : false;
 
-  const [contacts, setContacts] = React.useState<Tables<"contacts">[]>([]);
+  const [contacts, setContacts] = React.useState<Contact[]>([]);
+  const [movements, setMovements] = React.useState<ContactMovement[]>([]);
   const [loading, setLoading] = React.useState(true);
-  const [addModalOpen, setAddModalOpen] = React.useState(false);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = React.useState(0);
 
-  const [name, setName] = React.useState("");
-  const [email, setEmail] = React.useState("");
-  const [phone, setPhone] = React.useState("");
-  const [relationship, setRelationship] = React.useState("family");
-  const [birthday, setBirthday] = React.useState("");
-  const [notes, setNotes] = React.useState("");
-  const [submitting, setSubmitting] = React.useState(false);
+  const [query, setQuery] = React.useState("");
+  const [relFilter, setRelFilter] = React.useState("all");
+
+  const [addOpen, setAddOpen] = React.useState(false);
+  const [editing, setEditing] = React.useState<Contact | null>(null);
+  const [deleting, setDeleting] = React.useState<Contact | null>(null);
 
   React.useEffect(() => {
     let active = true;
     if (!householdId) return;
 
-    async function loadContacts() {
-      const { data } = await supabase
-        .from("contacts")
-        .select("*")
-        .eq("household_id", householdId)
-        .order("name", { ascending: true });
+    async function load() {
+      const [contactRes, movementRes] = await Promise.all([
+        supabase
+          .from("contacts")
+          .select("*")
+          .eq("household_id", householdId)
+          .order("name"),
+        // Only movements that NAME somebody. Pulling the whole ledger to filter
+        // it client-side would grow without bound on a real household.
+        supabase
+          .from("transactions")
+          .select("id, date, amount_paisa, contact_id, type, is_opening, note")
+          .eq("household_id", householdId)
+          .not("contact_id", "is", null),
+      ]);
 
-      if (active && data) {
-        setContacts(data);
+      if (!active) return;
+
+      const firstError = contactRes.error || movementRes.error;
+      if (firstError) {
+        setLoadError(firstError.message);
         setLoading(false);
+        return;
       }
+
+      setContacts(contactRes.data ?? []);
+      setMovements((movementRes.data ?? []) as ContactMovement[]);
+      setLoadError(null);
+      setLoading(false);
     }
 
-    loadContacts();
+    load();
     return () => {
       active = false;
     };
-  }, [householdId, supabase]);
+  }, [householdId, refreshKey, supabase]);
 
-  const handleAddContact = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!name.trim()) {
-      showToast({ type: "error", title: "Missing Name", description: "Please enter contact name." });
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  const visible = React.useMemo(
+    () =>
+      contacts.filter(
+        (c) =>
+          (relFilter === "all" || c.relationship === relFilter) && matchesContact(c, query),
+      ),
+    [contacts, relFilter, query],
+  );
+
+  /* The next three birthdays, so the calendar is not the only place they live. */
+  const upcoming = React.useMemo(() => {
+    return contacts
+      .filter((c) => c.birthday)
+      .map((c) => ({ contact: c, days: daysUntilBirthday(c.birthday!) ?? 9999 }))
+      .filter((row) => row.days <= 45)
+      .sort((a, b) => a.days - b.days)
+      .slice(0, 3);
+  }, [contacts]);
+
+  const handleDelete = async () => {
+    if (!deleting) return;
+    const { error } = await supabase.from("contacts").delete().eq("id", deleting.id);
+    if (error) {
+      showToast({ type: "error", title: "Could not remove them", description: error.message });
       return;
     }
-
-    setSubmitting(true);
-
-    const { error } = await supabase.from("contacts").insert({
-      household_id: householdId,
-      name: name.trim(),
-      email: email.trim() || null,
-      phone: phone.trim() || null,
-      relationship,
-      birthday: birthday || null,
-      notes: notes.trim() || null,
+    showToast({
+      type: "success",
+      title: "Contact removed",
+      description: "Their entries stay in your ledger — they just stop naming anyone.",
     });
-
-    setSubmitting(false);
-
-    if (error) {
-      showToast({ type: "error", title: "Could not add contact", description: error.message });
-      return;
-    }
-
-    showToast({ type: "success", title: "Contact Added", description: `"${name}" added to household contacts.` });
-    setName("");
-    setEmail("");
-    setPhone("");
-    setBirthday("");
-    setNotes("");
-    setAddModalOpen(false);
-
-    // Refresh
-    const { data } = await supabase.from("contacts").select("*").eq("household_id", householdId).order("name", { ascending: true });
-    if (data) setContacts(data);
+    setDeleting(null);
+    refresh();
   };
 
-  const handleDeleteContact = async (id: string) => {
-    const { error } = await supabase.from("contacts").delete().eq("id", id);
-    if (error) {
-      showToast({ type: "error", title: "Delete Failed", description: error.message });
-      return;
-    }
-    showToast({ type: "success", title: "Contact Removed", description: "Contact deleted." });
-    setContacts(contacts.filter((c) => c.id !== id));
-  };
+  const deletingCount = deleting
+    ? movements.filter((m) => m.contact_id === deleting.id).length
+    : 0;
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h1 className="font-display truncate text-[19px] font-semibold tracking-[-0.02em] sm:text-[22px]">
             Contacts
           </h1>
           <p className="text-muted mt-0.5 text-[12.5px]">
-            Family, committee members and the people you pay — with their birthdays.
+            The people behind your money — who you pay, who pays you, and whose
+            birthday is coming.
           </p>
         </div>
 
@@ -124,160 +172,285 @@ export default function ContactsPage() {
             {
               label: "Add contact",
               shortLabel: "Contact",
-              hint: "A person you pay, owe, or share a committee with",
+              hint: "Someone you pay, owe, or share a committee with",
               icon: Plus,
               tone: "primary",
-              onClick: () => setAddModalOpen(true),
+              disabled: readOnly,
+              onClick: () => {
+                setEditing(null);
+                setAddOpen(true);
+              },
             },
           ]}
         />
       </div>
 
+      {loadError && (
+        <div className="border-loss/25 bg-loss/8 text-loss rounded-panel border px-4 py-3 text-[12.5px]">
+          Could not load your contacts: {loadError}
+        </div>
+      )}
+
+      {/* ---- Birthdays worth knowing about --------------------------------- */}
+      {upcoming.length > 0 && (
+        <Reveal>
+          <div className="border-brass/25 bg-brass/8 rounded-panel border p-4">
+            <p className="text-brass-strong mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest">
+              <Cake size={13} />
+              Coming up
+            </p>
+            <ul className="flex flex-wrap gap-x-6 gap-y-1.5">
+              {upcoming.map(({ contact, days }) => {
+                const age = turningAge(contact.birthday!);
+                return (
+                  <li key={contact.id} className="text-[12.5px]">
+                    <span className="text-foreground font-medium">{contact.name}</span>
+                    <span className="text-muted">
+                      {" — "}
+                      {days === 0 ? "today" : days === 1 ? "tomorrow" : `in ${days} days`}
+                      {age !== null && `, turning ${age}`}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            <p className="text-muted mt-2 text-[11px]">
+              These also appear on your{" "}
+              <Link href="/calendar" className="text-brass-strong underline underline-offset-2">
+                calendar
+              </Link>
+              , so gift spending stops arriving as a surprise.
+            </p>
+          </div>
+        </Reveal>
+      )}
+
+      {/* ---- Search and filter --------------------------------------------- */}
+      {contacts.length > 0 && (
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-[1fr_220px]">
+          <Input
+            placeholder="Search by name, phone, note…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            prefixIcon={<Search size={15} />}
+            aria-label="Search contacts"
+          />
+          <RichSelect
+            value={relFilter}
+            onChange={setRelFilter}
+            options={[
+              { value: "all", label: "Everyone" },
+              ...RELATIONSHIPS.map((r) => ({
+                value: r.key,
+                label: r.label,
+                secondaryLabel: r.labelUr,
+              })),
+            ]}
+          />
+        </div>
+      )}
+
+      {/* ---- People --------------------------------------------------------- */}
       {loading ? (
-        <div className="bg-surface border-border rounded-panel border p-8 text-center text-muted text-xs">
-          Loading contacts directory...
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-surface border-border rounded-panel shimmer h-40 border" />
+          ))}
         </div>
       ) : contacts.length === 0 ? (
-        <div className="bg-surface border-border rounded-panel border p-12 text-center">
-          <Users size={40} className="text-muted mx-auto mb-3" />
-          <h3 className="font-display text-base font-semibold">No Contacts Saved</h3>
-          <p className="text-muted text-xs mt-1 max-w-sm mx-auto">
-            Save family members, committee participants, or service providers.
-          </p>
-          <Button variant="primary" onClick={() => setAddModalOpen(true)} className="mt-4">
-            + Add First Contact
-          </Button>
+        <EmptyState
+          title="No one saved yet"
+          description="Add the people your money actually moves between — the committee organiser, your plumber, the cousin you lend to. You can then name them on an entry and see everything that passed between you."
+          action={
+            <Button variant="primary" onClick={() => setAddOpen(true)} disabled={readOnly}>
+              Add your first contact
+            </Button>
+          }
+        />
+      ) : visible.length === 0 ? (
+        <div className="bg-surface border-border rounded-panel text-muted border p-8 text-center text-xs">
+          Nobody matches that.
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {contacts.map((contact) => (
-            <div key={contact.id} className="bg-surface border border-border rounded-panel p-5 shadow-sm space-y-3 flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-brass/10 text-brass font-bold text-xs flex items-center justify-center">
-                      {contact.name.slice(0, 2).toUpperCase()}
-                    </div>
-                    <div>
-                      <h3 className="font-display text-sm font-semibold">{contact.name}</h3>
-                      <span className="text-muted text-[11px] capitalize">{contact.relationship || "contact"}</span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteContact(contact.id)}
-                    className="p-1 text-muted hover:text-loss rounded-full transition-colors"
-                  >
-                    <Trash2 size={16} />
-                  </button>
-                </div>
-
-                <div className="mt-4 space-y-1.5 text-xs text-muted">
-                  {contact.phone && (
-                    <div className="flex items-center gap-2">
-                      <Phone size={14} className="text-brass shrink-0" />
-                      <span>{contact.phone}</span>
-                    </div>
-                  )}
-
-                  {contact.email && (
-                    <div className="flex items-center gap-2">
-                      <Mail size={14} className="text-brass shrink-0" />
-                      <span className="truncate">{contact.email}</span>
-                    </div>
-                  )}
-
-                  {contact.birthday && (
-                    <div className="flex items-center gap-2 text-foreground font-medium">
-                      <Cake size={14} className="text-brass shrink-0" />
-                      <span>Birthday: {contact.birthday}</span>
-                    </div>
-                  )}
-
-                  {contact.notes && (
-                    <p className="text-[11px] text-muted-foreground pt-1 italic">{contact.notes}</p>
-                  )}
-                </div>
-              </div>
-            </div>
+          {visible.map((contact, i) => (
+            <Reveal key={contact.id} index={i}>
+              <ContactCard
+                contact={contact}
+                summary={summariseContact(contact.id, movements)}
+                readOnly={readOnly}
+                onEdit={() => setEditing(contact)}
+                onDelete={() => setDeleting(contact)}
+              />
+            </Reveal>
           ))}
         </div>
       )}
 
-      {/* Add Contact Modal */}
-      <Modal
-        isOpen={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        title="Add Contact"
-        onSubmit={handleAddContact}
-        footer={
-          <>
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Contact
-            </Button>
-          </>
+      <ContactModal
+        isOpen={addOpen || editing !== null}
+        onClose={() => {
+          setAddOpen(false);
+          setEditing(null);
+        }}
+        onSaved={refresh}
+        householdId={householdId}
+        contact={editing}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={handleDelete}
+        title="Remove this contact?"
+        recordLabel={deleting?.name ?? ""}
+        recordMeta={deleting ? relationship(deleting.relationship).label : undefined}
+        cascadeHint={
+          deletingCount > 0
+            ? `${deletingCount} ${deletingCount === 1 ? "entry names" : "entries name"} them. Those entries stay exactly as they are and simply stop naming anyone — no amount or balance changes.`
+            : "Nothing in your ledger names them, so this removes the contact only."
         }
-      >
-        <div className="space-y-4">
-          <Input
-            label="Contact Name"
-            placeholder="e.g. Tariq Mehmood"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            required
-          />
+        confirmLabel="Remove contact"
+      />
+    </div>
+  );
+}
 
-          <div className="grid grid-cols-2 gap-3">
-            <Select
-              label="Relationship"
-              value={relationship}
-              onChange={(e) => setRelationship(e.target.value)}
-              options={[
-                { value: "family", label: "Family Member" },
-                { value: "friend", label: "Friend" },
-                { value: "colleague", label: "Colleague / Work" },
-                { value: "committee_member", label: "Committee Participant" },
-              ]}
-            />
+/* ========================================================================== */
 
-            <DatePicker
-              label="Birthday"
-              value={birthday}
-              onChange={setBirthday}
-              max={todayISO()}
-            />
-          </div>
+function ContactCard({
+  contact,
+  summary,
+  readOnly,
+  onEdit,
+  onDelete,
+}: {
+  contact: Contact;
+  summary: ReturnType<typeof summariseContact>;
+  readOnly: boolean;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const rel = relationship(contact.relationship);
+  const Icon = REL_ICON[rel.icon] ?? User;
+  const days = contact.birthday ? daysUntilBirthday(contact.birthday) : null;
 
-          <div className="grid grid-cols-2 gap-3">
-            <Input
-              label="Phone Number"
-              placeholder="03001234567"
-              value={phone}
-              onChange={(e) => setPhone(e.target.value)}
-            />
+  return (
+    <div className="group bg-surface border-border rounded-panel focus-within:border-brass/40 flex h-full flex-col border p-5 shadow-xs transition-colors">
+      <div className="flex items-start gap-3">
+        <span className="bg-brass/10 text-brass-strong flex size-9 shrink-0 items-center justify-center rounded-full text-[11px] font-bold">
+          {contact.name.slice(0, 2).toUpperCase()}
+        </span>
 
-            <Input
-              label="Email Address"
-              type="email"
-              placeholder="name@gmail.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-            />
-          </div>
-
-          <Input
-            label="Notes"
-            placeholder="e.g. Committee #3 participant, Electrician"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-          />
-
+        <div className="min-w-0 flex-1">
+          <h3 className="font-display text-foreground truncate text-[13.5px] font-semibold">
+            {contact.name}
+          </h3>
+          <p className="text-muted flex items-center gap-1 truncate text-[11px]">
+            <Icon size={11} strokeWidth={1.9} />
+            {rel.label}
+          </p>
         </div>
-      </Modal>
+
+        {!readOnly && (
+          <RowActions
+            onEdit={onEdit}
+            onDelete={onDelete}
+            editLabel="Edit contact"
+            deleteLabel="Remove contact"
+            reveal="always"
+          />
+        )}
+      </div>
+
+      <div className="text-muted mt-3 space-y-1 text-[11.5px]">
+        {contact.phone && (
+          <a
+            href={`tel:${contact.phone}`}
+            className="hover:text-foreground flex items-center gap-2 transition-colors"
+          >
+            <Phone size={12} className="text-brass-strong shrink-0" />
+            <span className="ltr tnum">{contact.phone}</span>
+          </a>
+        )}
+        {contact.email && (
+          <a
+            href={`mailto:${contact.email}`}
+            className="hover:text-foreground flex items-center gap-2 truncate transition-colors"
+          >
+            <Mail size={12} className="text-brass-strong shrink-0" />
+            <span className="ltr truncate">{contact.email}</span>
+          </a>
+        )}
+        {contact.birthday && (
+          <p className="flex items-center gap-2">
+            <Cake size={12} className="text-brass-strong shrink-0" />
+            <span className="ltr">{contact.birthday}</span>
+            {days !== null && days <= 45 && (
+              <span className="text-brass-strong font-medium">
+                {days === 0 ? "· today" : `· in ${days}d`}
+              </span>
+            )}
+          </p>
+        )}
+      </div>
+
+      {/*
+        What has actually passed between you.
+
+        Deliberately two figures rather than one "balance". The app does not
+        model lending yet, so a single net number would read as "Ahmed owes you
+        Rs 30,000" when all it means is that more came in than went out. Paid
+        and received state only what was recorded.
+      */}
+      <div className="border-border mt-auto grid grid-cols-2 gap-2 border-t pt-3">
+        <div>
+          <p className="text-muted flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest">
+            <ArrowUpRight size={10} /> You paid
+          </p>
+          <p className="tnum text-foreground-2 mt-0.5 text-[12.5px] font-semibold">
+            {summary.paidPaisa > 0 ? formatPKRCompact(summary.paidPaisa) : "—"}
+          </p>
+        </div>
+        <div>
+          <p className="text-muted flex items-center gap-1 text-[10px] font-semibold uppercase tracking-widest">
+            <ArrowDownLeft size={10} /> They paid
+          </p>
+          <p className="tnum text-foreground-2 mt-0.5 text-[12.5px] font-semibold">
+            {summary.receivedPaisa > 0 ? formatPKRCompact(summary.receivedPaisa) : "—"}
+          </p>
+        </div>
+      </div>
+
+      <p className="text-faint mt-2 text-[10.5px]">
+        {summary.count === 0 ? (
+          "Nothing logged against them yet — name them on an entry to start."
+        ) : (
+          <>
+            <span className="tnum">{summary.count}</span>{" "}
+            {summary.count === 1 ? "entry" : "entries"}
+            {summary.lastDate && (
+              <>
+                {" · last on "}
+                <span className="ltr">{summary.lastDate}</span>
+              </>
+            )}
+            {summary.netPaisa !== 0 && (
+              <>
+                {" · net "}
+                <span className="tnum">{formatPKR(Math.abs(summary.netPaisa))}</span>
+                {summary.netPaisa > 0 ? " their way in" : " your way out"}
+              </>
+            )}
+          </>
+        )}
+      </p>
+
+      {contact.notes && (
+        <p className="text-muted border-border mt-2 border-t pt-2 text-[11px] italic">
+          {contact.notes}
+        </p>
+      )}
     </div>
   );
 }

@@ -1116,6 +1116,14 @@ export type Database = {
            * counted as income for the month the account was created.
            */
           is_opening: boolean;
+          /**
+           * Who this movement involved — the plumber, the tenant, Ahmed bhai.
+           *
+           * OPTIONAL and behaviour-free: it never affects an amount, a category
+           * or a balance. It answers the one question the ledger could not, and
+           * it is what a per-person udhaar view gets built on.
+           */
+          contact_id: string | null;
           /** Who logged it. Carried over from quick_entries.user_id. */
           created_by: string | null;
           is_cleared: boolean;
@@ -1141,6 +1149,7 @@ export type Database = {
           date?: string;
           note?: string | null;
           is_opening?: boolean;
+          contact_id?: string | null;
           created_by?: string | null;
           is_cleared?: boolean;
           reference_no?: string | null;

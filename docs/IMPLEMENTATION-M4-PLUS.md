@@ -19,22 +19,42 @@ Repayments are **real money** and hit the ledger.
 
 ### The modelling problem, and its answer
 
-Lending Rs 5,000 to your cousin is not an expense. You still own the money — it
-has changed from cash into a receivable. If it is written as `type='expense'` it
-inflates "money out" on the dashboard and in Entries, and the user is told they
-spent Rs 5,000 they did not spend.
+**DECIDED BY THE OWNER, 2026-08-19, against a worked example. Do not change this
+without asking them again.**
 
-The ledger already has exactly one concept for "money moved but this is not
-income or expense": **transfer**. CLAUDE.md states it plainly — *transfers and
+> You have Rs 10,000 cash and lend Rs 5,000 to your cousin. Your cash correctly
+> becomes Rs 5,000. Your dashboard must say **"money out this month: Rs 0"** —
+> the Rs 5,000 appears separately as *owed to me*. Nothing is counted as
+> spending, because nothing was spent.
+
+Lending is not an expense. You still own the money; it has changed from cash
+into a receivable. Written as `type='expense'` it inflates money-out on the
+dashboard, in Entries, in every budget and in the tax surfaces — the user is
+told they spent Rs 5,000 on nothing.
+
+The ledger already has exactly one concept for "money moved, but this is neither
+income nor expense": **transfer**. CLAUDE.md states it plainly — *transfers and
 opening balances are not flow* — and every money-in/money-out figure already
-excludes them. Lending out is a transfer from your account to somewhere outside;
-repayment is a transfer back.
+excludes them. So:
+
+- Lending out → a transfer leaving the account.
+- Repayment → a transfer arriving.
+- Account balances move correctly. Flow figures do not move at all.
+
+This is what makes the feature safe for the existing records: it reuses an
+exclusion the reports already apply, rather than introducing a new kind of row
+every report would have to learn about.
 
 **Before writing any code, check `transactions_amount_sign_check` and whether
-`transfer_account_id` is nullable.** If a one-legged transfer is not permitted,
-the fallback is a dedicated `is_lending` boolean on `transactions` — but check
-first, because adding a column to the ledger is exactly what this plan tries to
-avoid.
+`transfer_account_id` is nullable.** A lending transfer has only one leg — there
+is no second account of yours on the other side. If a one-legged transfer is not
+permitted, the fallback is a dedicated `is_lending` boolean on `transactions`,
+and EVERY flow query must then exclude it explicitly. Check first: adding a
+column to the ledger is exactly what this plan exists to avoid.
+
+**Acceptance test before this ships:** record a Rs 5,000 loan, then confirm the
+dashboard's money-out, the Entries totals, every budget and the event-budget
+figures are all unchanged, while the account balance has dropped by Rs 5,000.
 
 ### Schema
 
@@ -200,5 +220,24 @@ and someone is actually using them.
 5. **Freelance vertical.**
 6. **M8 receipts, M9 reports, M10 audit log.**
 
-Goals are deliberately absent. The owner's call: finish what the application
-needs first, and ask again before building them.
+**Goals are dropped, not deferred quietly.** The owner's call on 2026-08-19:
+take them out of the plan and stop raising them. Everything else in M4 works
+without them. Revisit only when a real user asks for the feature by name — not
+because the roadmap once listed it.
+
+---
+
+## E · Security, before anything else ships
+
+The app is live at `bachat-book-seven.vercel.app` and **already has users**, so
+this is no longer theoretical.
+
+- **The seed admin password is `password@admin` on `admin@bachatbook.com`.** The
+  sign-in form is public by necessity; both halves of that credential are
+  guessable from the product's own name, and the account is `super_admin`. No
+  env var is leaked and none needs to be — someone simply types it into the same
+  box every user types theirs into. Fix in Supabase → Authentication → Users.
+- **Leaked-password protection is off.** Supabase's advisor has flagged it since
+  the project was created. It protects the users, not just the owner.
+- Do NOT enable Vercel deployment protection as a mitigation. It would lock the
+  existing users out of their own app.

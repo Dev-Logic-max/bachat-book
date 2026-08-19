@@ -47,11 +47,14 @@ export function ValuationModal({
   onClose,
   onSaved,
   holding,
+  history,
 }: {
   isOpen: boolean;
   onClose: () => void;
   onSaved: () => void;
   holding: Holding | null;
+  /** Every value recorded for this holding, newest first. */
+  history: Tables<"investment_valuations">[];
 }) {
   const supabase = createClient();
   const { showToast } = useToast();
@@ -196,13 +199,98 @@ export function ValuationModal({
           onChange={(e) => setNote(e.target.value)}
         />
 
-        <p className="text-faint text-[11px] leading-relaxed">
-          Every value you record is kept with its date, so this holding builds a
-          real history rather than one number that keeps being overwritten. Saving
-          twice on the same day corrects that day.
-        </p>
+        {/*
+          The history, drawn.
+          Keeping every valuation was pointless while nothing ever showed them —
+          the whole reason for a dated table rather than one overwritten column
+          is to be able to see the shape. A sparkline plus the rows is enough
+          here; a full chart belongs on a holding detail page.
+        */}
+        {history.length > 1 ? (
+          <div className="border-border border-t pt-4">
+            <p className="text-muted mb-2 text-[11px] font-semibold uppercase tracking-widest">
+              How it has moved
+            </p>
+            <ValueSparkline points={history} />
+            <ul className="divide-border border-border mt-3 divide-y rounded-control border">
+              {history.slice(0, 5).map((v) => (
+                <li key={v.id} className="flex items-center justify-between gap-3 px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="tnum text-foreground text-[12px] font-medium">
+                      {formatPKR(Number(v.value_paisa))}
+                    </p>
+                    {v.note && <p className="text-faint truncate text-[10.5px]">{v.note}</p>}
+                  </div>
+                  <span className="text-muted ltr shrink-0 text-[10.5px]">{v.as_of}</span>
+                </li>
+              ))}
+            </ul>
+            {history.length > 5 && (
+              <p className="text-faint mt-1.5 text-[10.5px]">
+                Showing the 5 most recent of {history.length}.
+              </p>
+            )}
+          </div>
+        ) : (
+          <p className="text-faint text-[11px] leading-relaxed">
+            Every value you record is kept with its date, so this holding builds a
+            real history rather than one number that keeps being overwritten.
+            Saving twice on the same day corrects that day.
+          </p>
+        )}
       </div>
     </Modal>
+  );
+}
+
+/**
+ * A value line, in plain SVG.
+ *
+ * `preserveAspectRatio="none"` with a 0–100 viewBox means it stretches to
+ * whatever width the modal is without any measuring, and a flat series still
+ * draws a centred line rather than dividing by a zero range.
+ */
+function ValueSparkline({ points }: { points: Tables<"investment_valuations">[] }) {
+  // Oldest first, so the line reads left to right like every other chart.
+  const series = [...points].sort((a, b) => (a.as_of < b.as_of ? -1 : 1));
+  const values = series.map((p) => Number(p.value_paisa));
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const d = values
+    .map((v, i) => {
+      const x = (i / Math.max(1, values.length - 1)) * 100;
+      const y = 30 - ((v - min) / range) * 26 - 2;
+      return `${i === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+
+  const rising = values[values.length - 1] >= values[0];
+
+  return (
+    <svg
+      viewBox="0 0 100 30"
+      preserveAspectRatio="none"
+      className="border-border bg-surface-subtle h-16 w-full rounded-control border"
+      role="img"
+      aria-label={`Value from ${formatPKR(values[0])} to ${formatPKR(values[values.length - 1])}`}
+    >
+      <path
+        d={`${d} L100,30 L0,30 Z`}
+        className={rising ? "fill-gain/10" : "fill-loss/10"}
+        stroke="none"
+      />
+      <path
+        d={d}
+        fill="none"
+        className={rising ? "stroke-gain" : "stroke-loss"}
+        strokeWidth={1.5}
+        vectorEffect="non-scaling-stroke"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
   );
 }
 

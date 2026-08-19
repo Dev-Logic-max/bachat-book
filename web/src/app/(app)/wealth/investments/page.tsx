@@ -87,6 +87,21 @@ const KIND_ICON: Record<string, React.ComponentType<{ size?: number; className?:
   Boxes,
 };
 
+/**
+ * The allocation strip's palette, on navy.
+ *
+ * Brass first because it is the product's accent and the largest holding should
+ * wear it. The rest are tints of white rather than new hues — a five-colour
+ * chart on a navy band fights the page, and the legend carries the meaning.
+ */
+const ALLOCATION_COLORS = [
+  "bg-brass",
+  "bg-brass/60",
+  "bg-white/55",
+  "bg-white/40",
+  "bg-white/30",
+];
+
 const PERIODS: { key: PayoutPeriod; label: string }[] = [
   { key: "week", label: "Weekly" },
   { key: "month", label: "Monthly" },
@@ -104,6 +119,7 @@ export default function InvestmentsPage() {
 
   const [holdings, setHoldings] = React.useState<Holding[]>([]);
   const [payouts, setPayouts] = React.useState<Payout[]>([]);
+  const [valuations, setValuations] = React.useState<Tables<"investment_valuations">[]>([]);
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
   const [institutions, setInstitutions] = React.useState<Tables<"institutions">[]>([]);
   const [syncEnabled, setSyncEnabled] = React.useState(false);
@@ -138,13 +154,18 @@ export default function InvestmentsPage() {
        * page render "No transactions found" for every household while the real
        * problem was an ambiguous embed.
        */
-      const [holdingRes, payoutRes, accountRes, institutionRes] = await Promise.all([
+      const [holdingRes, payoutRes, valuationRes, accountRes, institutionRes] = await Promise.all([
         supabase.from("investments").select("*").eq("household_id", householdId),
         supabase
           .from("investment_payouts")
           .select("*")
           .eq("household_id", householdId)
           .order("date", { ascending: false }),
+        supabase
+          .from("investment_valuations")
+          .select("*")
+          .eq("household_id", householdId)
+          .order("as_of", { ascending: false }),
         /*
          * EVERY account, archived and deleted ones included.
          *
@@ -167,7 +188,11 @@ export default function InvestmentsPage() {
       if (!active) return;
 
       const firstError =
-        holdingRes.error || payoutRes.error || accountRes.error || institutionRes.error;
+        holdingRes.error ||
+        payoutRes.error ||
+        valuationRes.error ||
+        accountRes.error ||
+        institutionRes.error;
       if (firstError) {
         setLoadError(firstError.message);
         setLoading(false);
@@ -176,6 +201,7 @@ export default function InvestmentsPage() {
 
       setHoldings(holdingRes.data ?? []);
       setPayouts(payoutRes.data ?? []);
+      setValuations(valuationRes.data ?? []);
       setAccounts((accountRes.data ?? []) as unknown as AccountWithInstitution[]);
       setInstitutions(institutionRes.data ?? []);
       setLoadError(null);
@@ -208,6 +234,14 @@ export default function InvestmentsPage() {
     return map;
   }, [payouts]);
 
+  const valuationsByHolding = React.useMemo(() => {
+    const map: Record<string, Tables<"investment_valuations">[]> = {};
+    for (const valuation of valuations) {
+      (map[valuation.investment_id] ??= []).push(valuation);
+    }
+    return map;
+  }, [valuations]);
+
   const institutionById = React.useMemo(
     () => new Map(institutions.map((i) => [i.id, i])),
     [institutions],
@@ -217,6 +251,56 @@ export default function InvestmentsPage() {
     () => portfolioTotals(holdings, payoutsByHolding),
     [holdings, payoutsByHolding],
   );
+
+  /** Value change plus every rupee of profit ever received. */
+  const lifetimeReturnPaisa = totals.capitalPaisa + totals.incomePaisa + totals.realisedPaisa;
+
+  /*
+   * The mix, by kind, over open holdings only.
+   *
+   * Anything under 4% is folded into "Other" rather than drawn as a 2px sliver
+   * with a legend entry — six invisible slices and a two-line legend is worse
+   * than one honest bucket.
+   */
+  const allocation = React.useMemo(() => {
+    if (totals.valuePaisa <= 0) return [];
+
+    const byKind = new Map<string, number>();
+    for (const holding of holdings) {
+      if (!isHoldingOpen(holding)) continue;
+      byKind.set(
+        holding.kind,
+        (byKind.get(holding.kind) ?? 0) + Number(holding.current_value_paisa),
+      );
+    }
+
+    const ranked = [...byKind.entries()]
+      .map(([key, valuePaisa]) => ({ key, valuePaisa, share: valuePaisa / totals.valuePaisa }))
+      .sort((a, b) => b.valuePaisa - a.valuePaisa);
+
+    const big = ranked.filter((s) => s.share >= 0.04);
+    const smallPaisa = ranked
+      .filter((s) => s.share < 0.04)
+      .reduce((sum, s) => sum + s.valuePaisa, 0);
+
+    const slices = big.map((slice, i) => ({
+      ...slice,
+      label: investmentKind(slice.key).label,
+      className: ALLOCATION_COLORS[i % ALLOCATION_COLORS.length],
+    }));
+
+    if (smallPaisa > 0) {
+      slices.push({
+        key: "__other",
+        valuePaisa: smallPaisa,
+        share: smallPaisa / totals.valuePaisa,
+        label: "Other",
+        className: "bg-white/25",
+      });
+    }
+
+    return slices;
+  }, [holdings, totals.valuePaisa]);
 
   const visible = React.useMemo(() => {
     const filtered = holdings.filter((h) => {
@@ -363,12 +447,75 @@ export default function InvestmentsPage() {
           />
 
           <div className="relative z-10">
-            <span className="text-brass text-[10px] font-bold uppercase tracking-[0.16em]">
-              What your holdings are worth
-            </span>
-            <p className="font-display tnum mt-1 text-3xl font-bold">
-              {formatPKR(totals.valuePaisa)}
-            </p>
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <span className="text-brass text-[10px] font-bold uppercase tracking-[0.16em]">
+                  What your holdings are worth
+                </span>
+                <p className="font-display tnum mt-1 text-3xl font-bold">
+                  {formatPKR(totals.valuePaisa)}
+                </p>
+              </div>
+
+              {/*
+                Total return as its own headline, because the big figure above
+                cannot answer "has this been worth it". It combines both halves
+                — the value going up AND the cash already paid out — which is
+                the only way a Behbood certificate and a PSX holding can be
+                compared at all.
+              */}
+              {totals.investedPaisa > 0 && (
+                <div className="shrink-0 text-right">
+                  <span className="text-on-navy-muted text-[10px] font-semibold uppercase tracking-widest">
+                    Total return
+                  </span>
+                  <p
+                    className={`font-display tnum mt-1 text-xl font-bold ${
+                      lifetimeReturnPaisa >= 0 ? "text-gain" : "text-loss"
+                    }`}
+                  >
+                    {lifetimeReturnPaisa >= 0 ? "+" : "−"}
+                    {formatPKR(Math.abs(lifetimeReturnPaisa))}
+                  </p>
+                  <p className="text-on-navy-muted tnum text-[10.5px]">
+                    {(
+                      (lifetimeReturnPaisa / totals.investedPaisa) * 100
+                    ).toFixed(1)}
+                    % on what you put in
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Where the money actually sits, without needing a chart library. */}
+            {allocation.length > 0 && (
+              <div className="mt-5">
+                <div className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full">
+                  {allocation.map((slice) => (
+                    <span
+                      key={slice.key}
+                      className={slice.className}
+                      style={{ width: `${slice.share * 100}%` }}
+                      title={`${slice.label} — ${formatPKR(slice.valuePaisa)}`}
+                    />
+                  ))}
+                </div>
+                <div className="mt-2.5 flex flex-wrap gap-x-4 gap-y-1.5">
+                  {allocation.map((slice) => (
+                    <span
+                      key={slice.key}
+                      className="text-on-navy-muted inline-flex items-center gap-1.5 text-[10.5px]"
+                    >
+                      <span className={`size-1.5 rounded-full ${slice.className}`} />
+                      {slice.label}
+                      <span className="text-on-navy tnum font-medium">
+                        {Math.round(slice.share * 100)}%
+                      </span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="border-navy-800 mt-5 grid grid-cols-2 gap-x-6 gap-y-4 border-t pt-4 sm:grid-cols-4">
               <HeroStat label="You put in" value={formatPKR(totals.investedPaisa)} />
@@ -602,6 +749,7 @@ export default function InvestmentsPage() {
         onClose={() => setValuing(null)}
         onSaved={refresh}
         holding={valuing}
+        history={valuing ? (valuationsByHolding[valuing.id] ?? []) : []}
       />
 
       <PayoutModal
@@ -736,7 +884,16 @@ function HoldingCard({
   const projected = projectedAnnualIncomePaisa(holding);
 
   return (
-    <div className="bg-surface border-border rounded-panel group/card focus-within:border-brass/40 relative flex h-full flex-col border p-5 shadow-xs transition-colors">
+    /*
+      `group` UNNAMED, and it is load-bearing.
+
+      RowActions reveals itself with `lg:group-hover:opacity-100`, which is the
+      unnamed variant. A named group (`group/card`) does not match it, so the
+      edit and delete buttons were invisible at every desktop width — present in
+      the DOM, reachable by tab, and impossible to find with a mouse. Below `lg`
+      they showed, which is why it only reproduced on a big screen.
+    */
+    <div className="group bg-surface border-border rounded-panel focus-within:border-brass/40 relative flex h-full flex-col border p-5 shadow-xs transition-colors">
       {/* Head */}
       <div className="flex items-start gap-3">
         {institution ? (
@@ -769,8 +926,23 @@ function HoldingCard({
           </p>
         </div>
 
+        {/*
+          `always`, not the usual hover reveal.
+
+          This card already shows "Update value", "Profit" and "Cash in" as
+          visible buttons, so hiding edit and delete behind hover made two of
+          the card's five actions undiscoverable while the other three sat in
+          plain sight. Hover-reveal is right for a dense list row; it is not
+          right for a card that is already advertising what it can do.
+        */}
         {!readOnly && (
-          <RowActions onEdit={onEdit} onDelete={onDelete} editLabel="Edit holding" deleteLabel="Remove holding" />
+          <RowActions
+            onEdit={onEdit}
+            onDelete={onDelete}
+            editLabel="Edit holding"
+            deleteLabel="Remove holding"
+            reveal="always"
+          />
         )}
       </div>
 

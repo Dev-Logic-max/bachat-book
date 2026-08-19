@@ -418,7 +418,10 @@ function BudgetCard({
     pace.state === "over" ? "bg-loss" : pace.state === "close" ? "bg-brass" : "bg-gain";
 
   return (
-    <div className="bg-surface border-border rounded-panel focus-within:border-brass/40 flex h-full flex-col border p-5 shadow-xs transition-colors">
+    // `group` drives the hover reveal in RowActions. Without it the edit and
+    // delete buttons never appear at desktop widths — see the same note on the
+    // holding card and on the accounts page.
+    <div className="group bg-surface border-border rounded-panel focus-within:border-brass/40 flex h-full flex-col border p-5 shadow-xs transition-colors">
       <div className="flex items-start gap-3">
         <span className="bg-brass/10 text-brass-strong flex size-8 shrink-0 items-center justify-center rounded-card">
           <CategoryIcon icon={category?.icon} size={16} />
@@ -436,7 +439,13 @@ function BudgetCard({
         </div>
 
         {!readOnly && (
-          <RowActions onEdit={onEdit} onDelete={onDelete} editLabel="Edit budget" deleteLabel="Remove budget" />
+          <RowActions
+            onEdit={onEdit}
+            onDelete={onDelete}
+            editLabel="Edit budget"
+            deleteLabel="Remove budget"
+            reveal="always"
+          />
         )}
       </div>
 

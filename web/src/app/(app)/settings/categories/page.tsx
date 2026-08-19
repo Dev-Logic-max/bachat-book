@@ -32,6 +32,7 @@ import {
   KIND_META,
   KIND_ORDER,
   groupCatalogue,
+  isCategoryOff,
   type Category,
   type CategoryKind,
 } from "@/lib/categories";
@@ -135,7 +136,7 @@ export default function CategorySettingsPage() {
    * passes `hiddenIds` and drops them.
    */
   const groups = React.useMemo(() => {
-    const all = groupCatalogue(categories, { kind });
+    const all = groupCatalogue(categories, { kind, ownFirstFor: householdId });
     const q = query.trim().toLowerCase();
     if (!q) return all;
 
@@ -150,21 +151,59 @@ export default function CategorySettingsPage() {
         matches(g.parent) ? g : { ...g, children: g.children.filter(matches) },
       )
       .filter((g) => matches(g.parent) || g.children.length > 0);
-  }, [categories, kind, query]);
+  }, [categories, kind, query, householdId]);
 
+  /*
+   * Switch a subcategory off, whichever tier owns it.
+   *
+   * Two mechanisms, because a household cannot write to a row it does not own:
+   * its own rows carry `is_active`, the platform defaults are listed in
+   * `household_hidden_categories`. Pointing the switch at the second for
+   * everything made it fail on exactly the rows the user created — the table
+   * has a trigger rejecting them — so the icon flipped optimistically and then
+   * snapped back with a toast nobody had time to read.
+   *
+   * Optimistic either way: this is a visibility preference, and a picker that
+   * lags a click behind feels broken in a way a toast cannot repair.
+   */
   const toggleHidden = async (category: Category) => {
-    const isHidden = hidden.has(category.id);
+    const isOwn = category.household_id === householdId;
+    const wasOff = isCategoryOff(category, hidden);
 
-    // Optimistic: this is a visibility preference, and a picker that lags a
-    // click behind feels broken in a way a toast cannot repair.
+    if (isOwn) {
+      setCategories((prev) =>
+        prev.map((c) => (c.id === category.id ? { ...c, is_active: wasOff } : c)),
+      );
+
+      const { error } = await supabase
+        .from("categories")
+        .update({ is_active: wasOff })
+        .eq("id", category.id)
+        .eq("household_id", householdId);
+
+      if (error) {
+        setCategories((prev) =>
+          prev.map((c) =>
+            c.id === category.id ? { ...c, is_active: category.is_active } : c,
+          ),
+        );
+        showToast({
+          type: "error",
+          title: "Could not update",
+          description: error.message,
+        });
+      }
+      return;
+    }
+
     setHidden((prev) => {
       const next = new Set(prev);
-      if (isHidden) next.delete(category.id);
+      if (wasOff) next.delete(category.id);
       else next.add(category.id);
       return next;
     });
 
-    const { error } = isHidden
+    const { error } = wasOff
       ? await supabase
           .from("household_hidden_categories")
           .delete()
@@ -177,7 +216,7 @@ export default function CategorySettingsPage() {
     if (error) {
       setHidden((prev) => {
         const next = new Set(prev);
-        if (isHidden) next.add(category.id);
+        if (wasOff) next.add(category.id);
         else next.delete(category.id);
         return next;
       });
@@ -419,12 +458,32 @@ function ParentCard({
   const [expanded, setExpanded] = React.useState(false);
   const tint = toneColor(parent.tone);
 
-  const liveCount = subcategories.filter((c) => !hidden.has(c.id)).length;
+  const liveCount = subcategories.filter((c) => !isCategoryOff(c, hidden)).length;
   const hiddenCount = subcategories.length - liveCount;
+
+  /*
+   * YOUR OWN ROWS ARE NEVER COLLAPSED AWAY.
+   *
+   * This card used to `slice(0, 6)` a list in catalogue order, and household
+   * rows carry the default `sort_order` of 1000 — so they sort behind every
+   * seeded one. Adding "Chai Dhaba" under Food, which already has eight
+   * defaults, put it at position nine: the row was written, the toast said so,
+   * and the screen showed no trace of it. It read exactly like a failed save.
+   *
+   * So the split is by OWNERSHIP, not position. Your own rows lead and always
+   * render; the platform defaults are the set that gets trimmed. On a
+   * management screen that is the right order anyway — these are the only rows
+   * you can rename or delete, and there are rarely more than a handful.
+   */
+  const own = subcategories.filter((c) => c.household_id === householdId);
+  const platform = subcategories.filter((c) => c.household_id !== householdId);
 
   // Six is about what fits before the card stops being scannable. The rest are
   // one click away rather than behind a scrollbar inside a card.
-  const shown = expanded ? subcategories : subcategories.slice(0, 6);
+  const shown = expanded
+    ? [...own, ...platform]
+    : [...own, ...platform.slice(0, Math.max(0, 6 - own.length))];
+  const collapsedCount = subcategories.length - shown.length;
 
   return (
     <div className="bg-surface border-border rounded-panel shadow-xs flex h-full flex-col overflow-hidden border">
@@ -470,7 +529,7 @@ function ParentCard({
       {/* Subcategories */}
       <ul className="divide-border flex-1 divide-y">
         {shown.map((child) => {
-          const isHidden = hidden.has(child.id);
+          const isHidden = isCategoryOff(child, hidden);
           const isOwn = child.household_id === householdId;
 
           return (
@@ -574,13 +633,15 @@ function ParentCard({
 
       {/* Foot */}
       <div className="border-border flex items-center justify-between gap-2 border-t px-2 py-1.5">
-        {subcategories.length > 6 ? (
+        {/* Keyed off what is actually hidden, not off the total — with four of
+            your own rows pinned, a nine-row card has nothing left to reveal. */}
+        {collapsedCount > 0 || expanded ? (
           <button
             type="button"
             onClick={() => setExpanded((v) => !v)}
             className="text-muted hover:text-foreground rounded-control px-2 py-1 text-[11px] font-medium transition-colors"
           >
-            {expanded ? "Show less" : `Show all ${subcategories.length}`}
+            {expanded ? "Show less" : `Show ${collapsedCount} more`}
           </button>
         ) : (
           <span />

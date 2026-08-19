@@ -7,6 +7,7 @@ import {
   Cog,
   CreditCard,
   Landmark,
+  Tags,
   Pencil,
   Search,
   ShieldCheck,
@@ -191,13 +192,22 @@ export default function AdminConsolePage() {
           </p>
         </div>
 
-        <Link
-          href="/admin/institutions"
-          className="border-border bg-surface hover:bg-surface-subtle shadow-xs hidden h-9 shrink-0 items-center gap-1.5 rounded-control border px-3.5 text-[12.5px] font-medium transition-colors lg:flex"
-        >
-          <Landmark size={15} className="text-brass-strong" />
-          Bank catalogue
-        </Link>
+        <div className="hidden shrink-0 items-center gap-2 lg:flex">
+          <Link
+            href="/admin/categories"
+            className="border-border bg-surface hover:bg-surface-subtle shadow-xs flex h-9 items-center gap-1.5 rounded-control border px-3.5 text-[12.5px] font-medium transition-colors"
+          >
+            <Tags size={15} className="text-brass-strong" />
+            Category catalogue
+          </Link>
+          <Link
+            href="/admin/institutions"
+            className="border-border bg-surface hover:bg-surface-subtle shadow-xs flex h-9 items-center gap-1.5 rounded-control border px-3.5 text-[12.5px] font-medium transition-colors"
+          >
+            <Landmark size={15} className="text-brass-strong" />
+            Bank catalogue
+          </Link>
+        </div>
       </header>
 
       {/*

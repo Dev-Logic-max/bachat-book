@@ -77,13 +77,33 @@ export function groupCatalogue(
     hiddenIds?: ReadonlySet<string>;
     /** Drop retired categories. Off in settings, on in every picker. */
     activeOnly?: boolean;
+    /**
+     * Float this household's own subcategories to the top of each group.
+     *
+     * For the two MANAGEMENT surfaces only. Household rows all carry the default
+     * `sort_order` of 1000, so in catalogue order they sit behind every seeded
+     * one — which is right in a picker, where the seeded priority is the whole
+     * point, and wrong on a screen whose job is to manage the handful of rows
+     * you made yourself. Pickers must not pass this.
+     */
+    ownFirstFor?: string;
+    /**
+     * Keep this household's own switched-off rows even under `activeOnly`.
+     *
+     * For the MANAGEMENT surfaces. A row you switched off has to stay on the
+     * screen that can switch it back on, or the only way to recover it is to
+     * create it again — and the name is still taken, so that fails too.
+     */
+    keepOwnInactiveFor?: string;
   } = {},
 ): CategoryGroup[] {
-  const { kind, hiddenIds, activeOnly } = options;
+  const { kind, hiddenIds, activeOnly, ownFirstFor, keepOwnInactiveFor } = options;
 
   const pool = categories.filter((c) => {
     if (kind && c.kind !== kind) return false;
-    if (activeOnly && !c.is_active) return false;
+    if (activeOnly && !c.is_active) {
+      return Boolean(keepOwnInactiveFor) && c.household_id === keepOwnInactiveFor;
+    }
     return true;
   });
 
@@ -95,8 +115,39 @@ export function groupCatalogue(
       children: pool
         .filter((c) => c.parent_id === parent.id)
         .filter((c) => !hiddenIds?.has(c.id))
-        .sort(byCatalogueOrder),
+        .sort((a, b) => {
+          if (ownFirstFor) {
+            const aOwn = a.household_id === ownFirstFor ? 0 : 1;
+            const bOwn = b.household_id === ownFirstFor ? 0 : 1;
+            if (aOwn !== bOwn) return aOwn - bOwn;
+          }
+          return byCatalogueOrder(a, b);
+        }),
     }));
+}
+
+/**
+ * IS THIS ROW SWITCHED OFF FOR THIS HOUSEHOLD — the one answer, in one place.
+ *
+ * "Off" has TWO storage mechanisms, because the two tiers are owned by
+ * different people and a household cannot write to a row it does not own:
+ *
+ *   YOUR OWN subcategory  →  `is_active = false` on the row itself.
+ *   A PLATFORM row        →  a row in `household_hidden_categories`.
+ *
+ * They must never be confused. `household_hidden_categories` carries a trigger
+ * that REJECTS your own rows, so pointing the toggle at it for everything made
+ * the switch silently fail on exactly the rows you created — the optimistic
+ * flip landed, the write bounced, and the icon snapped back.
+ *
+ * A platform row that the PLATFORM retired (`is_active = false`, no household
+ * id) is off for everyone and is not something a household can turn back on.
+ */
+export function isCategoryOff(
+  category: Category,
+  hiddenIds?: ReadonlySet<string>,
+): boolean {
+  return !category.is_active || Boolean(hiddenIds?.has(category.id));
 }
 
 /**

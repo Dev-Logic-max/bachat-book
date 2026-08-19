@@ -27,7 +27,7 @@ import {
 } from "@/components/category-icon";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
-import { groupCatalogue, type Category } from "@/lib/categories";
+import { groupCatalogue, isCategoryOff, type Category } from "@/lib/categories";
 import { cn } from "@/lib/utils";
 
 import type { CategoryDraft } from "@/components/category-form-modal";
@@ -117,7 +117,14 @@ export function CategoriesModal({
    * you switched it off" has to be reachable. Every actual PICKER drops them.
    */
   const groups = React.useMemo(() => {
-    const all = groupCatalogue(categories, { kind, activeOnly: true });
+    const all = groupCatalogue(categories, {
+      kind,
+      activeOnly: true,
+      ownFirstFor: householdId,
+      // A row you switched off has to stay on the screen that switches it back
+      // on. Platform-retired rows still drop — those are not yours to restore.
+      keepOwnInactiveFor: householdId,
+    });
     const q = query.trim().toLowerCase();
     if (!q) return all;
 
@@ -132,21 +139,47 @@ export function CategoriesModal({
         matches(g.parent) ? g : { ...g, children: g.children.filter(matches) },
       )
       .filter((g) => matches(g.parent) || g.children.length > 0);
-  }, [categories, kind, query]);
+  }, [categories, kind, query, householdId]);
 
   const total = groups.reduce((n, g) => n + g.children.length + 1, 0);
 
+  /*
+   * Two mechanisms, one switch — see `isCategoryOff`. Your own rows carry
+   * `is_active`; the platform defaults are listed in
+   * `household_hidden_categories`, which has a trigger that refuses your own.
+   */
   const toggleHidden = async (category: Category) => {
-    const isHidden = hidden.has(category.id);
+    const wasOff = isCategoryOff(category, hidden);
+
+    if (category.household_id === householdId) {
+      const { error } = await supabase
+        .from("categories")
+        .update({ is_active: wasOff })
+        .eq("id", category.id)
+        .eq("household_id", householdId);
+
+      if (error) {
+        showToast({
+          type: "error",
+          title: "Could not update",
+          description: error.message,
+        });
+        return;
+      }
+      // No local copy to patch — `categories` is owned by the form behind this
+      // sheet, so the refetch is what makes the change visible.
+      onChanged?.();
+      return;
+    }
 
     setHidden((prev) => {
       const next = new Set(prev);
-      if (isHidden) next.delete(category.id);
+      if (wasOff) next.delete(category.id);
       else next.add(category.id);
       return next;
     });
 
-    const { error } = isHidden
+    const { error } = wasOff
       ? await supabase
           .from("household_hidden_categories")
           .delete()
@@ -159,7 +192,7 @@ export function CategoriesModal({
     if (error) {
       setHidden((prev) => {
         const next = new Set(prev);
-        if (isHidden) next.add(category.id);
+        if (wasOff) next.add(category.id);
         else next.delete(category.id);
         return next;
       });
@@ -326,7 +359,7 @@ export function CategoriesModal({
                   {children.length > 0 && (
                     <ul className="divide-border divide-y">
                       {children.map((child) => {
-                        const isHidden = hidden.has(child.id);
+                        const isHidden = isCategoryOff(child, hidden);
                         const isOwn = child.household_id === householdId;
 
                         return (

@@ -17,6 +17,7 @@ import {
   Plus,
   Receipt,
   Repeat,
+  RotateCcw,
   Sparkles,
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
@@ -27,6 +28,7 @@ import { TaskFormModal } from "@/components/task-form-modal";
 import { CompleteTaskModal } from "@/components/complete-task-modal";
 import { SubtaskPriceModal } from "@/components/subtask-price-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
+import { ConfirmActionModal } from "@/components/confirm-action-modal";
 import { CategoryIcon, categoryLabel, toneColor } from "@/components/category-icon";
 import { RowActions } from "@/components/ui/row-actions";
 import { useToast } from "@/components/ui/toast";
@@ -93,6 +95,7 @@ export default function TasksPage() {
   const [formOpen, setFormOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<TaskWithChecklist | null>(null);
   const [completing, setCompleting] = React.useState<TaskWithChecklist | null>(null);
+  const [reopening, setReopening] = React.useState<TaskWithChecklist | null>(null);
   const [deleting, setDeleting] = React.useState<TaskWithChecklist | null>(null);
   const [pricing, setPricing] = React.useState<{
     item: ChecklistItem;
@@ -192,32 +195,61 @@ export default function TasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [householdId, supabase, refreshKey]);
 
+  /*
+   * FOUR columns, and OVERDUE is the first of them.
+   *
+   * It is not a fourth status — it is To do and In progress past their date —
+   * but leaving those cards mixed in with work that is merely scheduled buries
+   * the only ones costing money in late fees. Pulling them out is the whole
+   * reason a board beats a list here.
+   *
+   * The column is dropped entirely when empty rather than shown with a cheerful
+   * zero: a permanent "Overdue 0" is a scolding shape on a screen where nothing
+   * is wrong.
+   */
   const byStatus = React.useMemo(() => {
+    const overdue: TaskWithChecklist[] = [];
     const todo: TaskWithChecklist[] = [];
     const inProgress: TaskWithChecklist[] = [];
     const done: TaskWithChecklist[] = [];
+
     for (const t of tasks) {
       const s = deriveStatus(t);
-      if (s === "done") done.push(t);
-      else if (s === "in_progress") inProgress.push(t);
-      else todo.push(t);
+      if (s === "done") {
+        done.push(t);
+      } else if (dueTone(t.due_date, t.priority) === "overdue") {
+        overdue.push(t);
+      } else if (s === "in_progress") {
+        inProgress.push(t);
+      } else {
+        todo.push(t);
+      }
     }
+
     // Open work: soonest due first. Completed: most recently finished first.
+    overdue.sort(compareOpen);
     todo.sort(compareOpen);
     inProgress.sort(compareOpen);
     done.sort(compareDone);
-    return { todo, inProgress, done };
+    return { overdue, todo, inProgress, done };
   }, [tasks]);
 
-  const openTasks = byStatus.todo.length + byStatus.inProgress.length;
-  const overdue = [...byStatus.todo, ...byStatus.inProgress].filter(
-    (t) => dueTone(t.due_date, t.priority) === "overdue",
-  );
+  const overdue = byStatus.overdue;
+  const openTasks =
+    byStatus.todo.length + byStatus.inProgress.length + overdue.length;
 
-  /** Ticking the circle never completes silently — it always confirms first. */
+  /**
+   * Ticking the circle never changes anything silently — in EITHER direction.
+   *
+   * Completing was already a dialog, because for a paid task it writes an entry.
+   * Reopening one used to fire on the click: it DELETES that entry and
+   * re-settles the account, so a mis-aimed tap on a finished card silently
+   * un-spent real money and the only notice was a toast that had already
+   * happened. Both directions now ask first.
+   */
   const requestComplete = (task: TaskWithChecklist) => {
     if (deriveStatus(task) === "done") {
-      void handleUncomplete(task);
+      setReopening(task);
       return;
     }
     setCompleting(task);
@@ -258,7 +290,10 @@ export default function TasksPage() {
     }
   };
 
-  const handleUncomplete = async (task: TaskWithChecklist) => {
+  const handleUncomplete = async () => {
+    const task = reopening;
+    if (!task) return;
+    setBusy(true);
     try {
       const hadEntry = Boolean(task.settled_transaction_id);
       await uncompleteTask(supabase, task, hadEntry);
@@ -269,6 +304,7 @@ export default function TasksPage() {
           ? "The entry it created was removed and the balance re-settled."
           : undefined,
       });
+      setReopening(null);
       reload();
     } catch (err) {
       showToast({
@@ -276,6 +312,8 @@ export default function TasksPage() {
         title: "Could not reopen the task",
         description: err instanceof Error ? err.message : "Unknown error.",
       });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -431,8 +469,13 @@ export default function TasksPage() {
         </div>
       </header>
 
-      {/* Overdue is stated, never left to be noticed. */}
-      {overdue.length > 0 && (
+      {/*
+        Overdue is stated, never left to be noticed — but only where nothing
+        else is saying it. The board now has a column of its own for these, and
+        a banner above it repeating the same two names is the second copy of one
+        fact, which is how a screen starts feeling nagging rather than useful.
+      */}
+      {overdue.length > 0 && viewMode === "list" && (
         <Reveal index={0}>
           <div className="border-loss/30 bg-loss-soft flex items-start gap-2.5 rounded-card border p-3.5">
             <AlertTriangle size={15} className="text-loss mt-0.5 shrink-0" />
@@ -478,7 +521,28 @@ export default function TasksPage() {
         />
       ) : viewMode === "board" ? (
         <Reveal index={1}>
-          <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-3">
+          {/*
+            Four columns only when something is overdue. The grid tracks change
+            with it rather than leaving a gap — three columns at 4/3 width look
+            like a layout bug, not like good news.
+          */}
+          <div
+            className={cn(
+              "grid grid-cols-1 items-start gap-4",
+              overdue.length > 0
+                ? "md:grid-cols-2 xl:grid-cols-4"
+                : "md:grid-cols-3",
+            )}
+          >
+            {overdue.length > 0 && (
+              <Column
+                title="Overdue"
+                hint="Past their date"
+                tasks={overdue}
+                tone="loss"
+                {...cardProps}
+              />
+            )}
             <Column
               title="To do"
               hint="Nothing ticked yet"
@@ -508,7 +572,14 @@ export default function TasksPage() {
             <div className="bg-surface-subtle text-muted px-4 py-2 text-[10px] font-semibold uppercase tracking-widest">
               {openTasks} open · {byStatus.done.length} completed
             </div>
-            {[...byStatus.todo, ...byStatus.inProgress, ...byStatus.done].map((t) => (
+            {/* Overdue leads the list too, for the same reason it leads the
+                board — it is the part of "open" that is already costing you. */}
+            {[
+              ...overdue,
+              ...byStatus.todo,
+              ...byStatus.inProgress,
+              ...byStatus.done,
+            ].map((t) => (
               <TaskCard key={t.id} task={t} variant="row" {...cardProps} />
             ))}
           </div>
@@ -535,6 +606,70 @@ export default function TasksPage() {
         accounts={accounts}
         categories={categories}
         busy={busy}
+      />
+
+      {/*
+        Reopening is not the harmless half of a toggle.
+        For a paid task it DELETES the entry that was written and re-settles the
+        account, so the dialog says which balance moves and by how much before
+        anything happens.
+      */}
+      <ConfirmActionModal
+        isOpen={reopening !== null}
+        onClose={() => setReopening(null)}
+        onConfirm={handleUncomplete}
+        title="Reopen this task?"
+        subtitle={reopening?.title}
+        icon={<RotateCcw size={16} />}
+        confirmLabel="Reopen task"
+        tone={reopening?.settled_transaction_id ? "warn" : "neutral"}
+        busy={busy}
+        headline={
+          reopening?.settled_transaction_id ? (
+            <span className="text-foreground-2 text-[12.5px]">
+              <span className="tnum font-semibold">
+                {formatPKR(Math.abs(Number(reopening.amount_paisa ?? 0)))}
+              </span>{" "}
+              returns to{" "}
+              <span className="font-medium">
+                {accounts.find((a) => a.id === reopening.account_id)?.name ??
+                  "the account it came from"}
+              </span>
+              .
+            </span>
+          ) : undefined
+        }
+        points={
+          reopening?.settled_transaction_id
+            ? [
+                {
+                  icon: <Receipt size={13} />,
+                  label: "The entry it wrote is deleted",
+                  detail:
+                    "The account is re-settled, so the balance goes back to what it was before you completed this.",
+                },
+                {
+                  icon: <RotateCcw size={13} />,
+                  label: "The task returns to the board",
+                  detail:
+                    "Its subtasks and their prices are kept, so you can complete it again without retyping anything.",
+                },
+                {
+                  icon: <AlertTriangle size={13} />,
+                  label: "Only do this if the payment did not happen",
+                  detail:
+                    "If it did and the figure is wrong, edit the task instead — the entry follows it, and no money is invented.",
+                },
+              ]
+            : [
+                {
+                  icon: <RotateCcw size={13} />,
+                  label: "It just goes back onto the board",
+                  detail:
+                    "This task does not move money, so nothing in your ledger changes.",
+                },
+              ]
+        }
       />
 
       <SubtaskPriceModal
@@ -609,16 +744,24 @@ function Column({
   title: string;
   hint: string;
   tasks: TaskWithChecklist[];
-  tone: "neutral" | "brass" | "gain";
+  tone: "neutral" | "brass" | "gain" | "loss";
 } & CardHandlers) {
   return (
-    <section className="bg-surface-subtle border-border rounded-panel border">
+    <section
+      className={cn(
+        "bg-surface-subtle border-border rounded-panel border",
+        // Overdue gets a tinted border — it is the one column you want to find
+        // without reading the headings.
+        tone === "loss" && "border-loss/30 bg-loss-soft/40",
+      )}
+    >
       <header className="border-border flex items-center gap-2 border-b px-4 py-3">
         <span
           className={cn(
             "size-2 shrink-0 rounded-full",
             tone === "gain" && "bg-gain",
             tone === "brass" && "bg-brass",
+            tone === "loss" && "bg-loss",
             tone === "neutral" && "bg-border-strong",
           )}
         />
@@ -726,14 +869,29 @@ function TaskCard({
           )}
         </button>
 
+        {/*
+          The TITLE completes the task; it does not edit it.
+          Reading a card and reaching for its name is the gesture of "I have done
+          this", not "I want to change what it says" — and on a paid task the
+          edit form it used to open is the one place a stray keystroke rewrites a
+          ledger entry. Editing and deleting are deliberate acts and now live
+          only behind their own icons.
+        */}
         <button
           type="button"
-          onClick={() => onOpen(task)}
+          onClick={() => onToggle(task)}
+          title={isDone ? "Reopen this task" : "Complete this task"}
           className="min-w-0 flex-1 text-left"
         >
+          {/*
+            Wraps to two lines rather than truncating. With four columns the
+            card is ~290px wide and the priority tag takes a bite out of that,
+            so "Electricity Bill (ME…" was the common case — and the title is
+            the one piece of text on the card that has to be readable.
+          */}
           <span
             className={cn(
-              "block truncate text-[12.5px] font-medium",
+              "block line-clamp-2 text-[12.5px] font-medium",
               isDone && "text-muted line-through",
             )}
           >
@@ -754,12 +912,11 @@ function TaskCard({
       </div>
 
       {/* ---- Band 2: everything measurable -------------------------- */}
-      <div
-        className={cn(
-          "border-border/70 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10.5px]",
-          variant === "card" ? "ps-6.5" : "ps-6.5",
-        )}
-      >
+      {/* Flush left, not indented to clear the tick. The indent was there to
+          line the tags up under the title, but it left a column of dead space
+          down the card and pushed the row toward the right edge, which is the
+          one place a wrapping chip has nowhere to go. */}
+      <div className="border-border/70 mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 border-t pt-2 text-[10.5px]">
         <DueChip due={task.due_date} tone={tone} isDone={isDone} />
 
         {category && (
@@ -838,7 +995,7 @@ function TaskCard({
         paid task each tick is where the price is captured.
       */}
       {showSubtasks && (
-        <ul className="border-border/70 ms-6.5 mt-2 space-y-px border-t pt-1.5">
+        <ul className="border-border/70 mt-2 space-y-px border-t pt-1.5">
           {items.map((item) => (
             <li key={item.id}>
               <button
@@ -883,7 +1040,7 @@ function TaskCard({
         completed in June lands on an August page that does not contain it.
       */}
       {showFooter && settled && (
-        <div className="border-border/70 ms-6.5 mt-2 border-t pt-2">
+        <div className="border-border/70 mt-2 border-t pt-2">
           <a
             href={`/entries?month=${settled.date.slice(0, 7)}&entry=${settled.id}`}
             className="bg-surface-subtle hover:bg-brass-soft hover:text-brass-strong text-foreground-2 group/ref inline-flex max-w-full items-center gap-1.5 rounded-full px-2 py-1 text-[10.5px] font-medium transition-colors"

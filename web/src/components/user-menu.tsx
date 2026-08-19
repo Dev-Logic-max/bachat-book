@@ -9,6 +9,7 @@ import { useSession } from "@/components/session-provider";
 import { signOutAction } from "@/lib/supabase/actions";
 import { formatName } from "@/lib/format";
 import { daysUntil, expiryTone, periodEndsAt, subscriptionLabel } from "@/lib/plan";
+import { APP_VERSION_LABEL } from "@/lib/version";
 import { cn } from "@/lib/utils";
 
 /**
@@ -126,6 +127,18 @@ export function UserMenu() {
               onClick={() => signOutAction()}
             />
           </div>
+
+          {/*
+            The build, at the very bottom of the account menu.
+            It was pinned under the rail's profile block, where it sat in view
+            permanently for a fact nobody needs permanently — but it still has to
+            be FINDABLE, because it is the first thing to ask for when something
+            is wrong. A menu you already open to reach Settings and Sign out is
+            where it belongs: out of the way, one click, always the same place.
+          */}
+          <p className="text-faint/70 ltr border-border mt-1 border-t px-2.5 pb-0.5 pt-2 text-[10px] tracking-wide">
+            Bachat Book {APP_VERSION_LABEL}
+          </p>
         </>
       )}
     </Popover>

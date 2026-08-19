@@ -35,7 +35,6 @@ import { ThemeToggle } from "@/components/theme";
 import { formatName } from "@/lib/format";
 import { MODULES, resolveModules, type WorkspacePreset } from "@/lib/modules";
 import { useRailCollapsed } from "@/lib/rail-state";
-import { APP_VERSION_LABEL } from "@/lib/version";
 
 import type { LucideIcon } from "lucide-react";
 import type { UserSession } from "@/lib/session";
@@ -507,17 +506,12 @@ export function AppRail({ session }: { session?: UserSession | null }) {
         </div>
 
         {/*
-          The build, in the quietest place on the screen.
-          It belongs where a user already looks when something is wrong and they
-          are about to tell you about it — beside their own account, under
-          everything else. Not shown collapsed: at 72px it would be the widest
-          thing in the rail.
+          The build number lived here and has moved into the account menu
+          (`user-menu.tsx`). A version string is asked for perhaps twice a year,
+          and pinning it under the profile block gave a rarely-wanted fact a
+          permanent seat at the bottom of every screen. It is now one click away
+          in the menu people already open for Settings and Sign out.
         */}
-        {!collapsed && (
-          <p className="text-on-navy-muted/50 ltr mt-3 px-1 text-[10px] tracking-wide">
-            Bachat Book {APP_VERSION_LABEL}
-          </p>
-        )}
       </div>
     </aside>
   );

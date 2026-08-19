@@ -1,9 +1,20 @@
 import * as SQLite from 'expo-sqlite';
 import NetInfo from '@react-native-community/netinfo';
+import { AppState } from 'react-native';
 import { randomUUID } from 'expo-crypto';
 import { supabase } from './supabase';
 
 const DB_NAME = 'bachat_outbox.db';
+
+/**
+ * Attempts before a queued write is parked as `failed` and surfaced to the user.
+ *
+ * Capped rather than infinite: a row the server will never accept would
+ * otherwise be retried forever, and the queue fills with a write nobody can see
+ * or clear. A parked row is never auto-discarded — the user chooses retry or
+ * discard, because a silently dropped expense is the failure they never forgive.
+ */
+const MAX_ATTEMPTS = 5;
 
 export interface OutboxRow {
   id: string;
@@ -158,17 +169,21 @@ export async function enqueueAction(
 export function isPermanentError(error: any): boolean {
   const code: string = error?.code ?? '';
 
-  // Class 23 — integrity constraint violation. Covers the check constraint on
-  // transactions.payment_method and quick_entries.type, and the FK on
-  // category_id. Retrying cannot make these succeed.
+  // Class 23 — integrity constraint violation. Covers
+  // `transactions_amount_sign_check` (a sign that disagrees with `type`),
+  // `transactions_payment_method_check`, and the FK on `category_id`. Retrying
+  // cannot make any of these succeed.
   if (code.startsWith('23')) return true;
 
   // 42501 insufficient_privilege — an RLS policy refused the write.
   // 42703 undefined_column, 42P01 undefined_table — a schema/type drift bug.
   if (code === '42501' || code === '42703' || code === '42P01') return true;
 
-  // P0001 raise_exception — assert_entry_link_valid() rejecting a link to an
-  // account with allow_entry_link = false, a foreign household, or a transfer.
+  // P0001 raise_exception — `assert_account_accepts_movement` refusing a
+  // movement into a deleted or deactivated account, or a negative one on a
+  // locked account. The picker greys these out, but a queued write replays a
+  // payload built before the account changed state, so the database is the only
+  // thing that can actually stop it.
   if (code === 'P0001') return true;
 
   // PostgREST-level rejections (schema cache, malformed body, bad range).
@@ -179,9 +194,43 @@ export function isPermanentError(error: any): boolean {
 }
 
 /**
- * Replay pending outbox mutations to Supabase with strict verb mapping (MOBILE-PLAN.md §6.4)
+ * Only one drain runs at a time.
+ *
+ * `replayOutbox` is triggered from three places — the NetInfo listener, app
+ * foreground, and every `enqueueAction` — and reconnecting while the app comes
+ * back to the foreground fires two of them within the same tick. Both would
+ * SELECT the same pending rows before either marked them `inflight`, and send
+ * every queued write twice. The upsert makes a duplicated INSERT harmless, so
+ * the symptom is not corruption but a doubled request volume on exactly the bad
+ * connection that caused the queue in the first place.
+ *
+ * A second call while draining sets `rerun` instead of starting a parallel pass,
+ * so rows enqueued mid-drain are still picked up.
  */
+let draining = false;
+let rerun = false;
+
 export async function replayOutbox(): Promise<{ processed: number; failed: number }> {
+  if (draining) {
+    rerun = true;
+    return { processed: 0, failed: 0 };
+  }
+
+  draining = true;
+  try {
+    let total = { processed: 0, failed: 0 };
+    do {
+      rerun = false;
+      const pass = await drainOnce();
+      total = { processed: total.processed + pass.processed, failed: total.failed + pass.failed };
+    } while (rerun);
+    return total;
+  } finally {
+    draining = false;
+  }
+}
+
+async function drainOnce(): Promise<{ processed: number; failed: number }> {
   const db = getDb();
   const rows = db.getAllSync<OutboxRow>(
     `SELECT * FROM outbox WHERE status = 'pending' ORDER BY created_at ASC`
@@ -234,7 +283,11 @@ export async function replayOutbox(): Promise<{ processed: number; failed: numbe
       const isPermanent = isPermanentError(error);
       const newRetries = row.retries + 1;
 
-      if (isPermanent || newRetries >= 3) {
+      // Five, per MOBILE-PLAN §5.2 — this was 3 and disagreed with the plan and
+      // with the banner copy. A transient failure on a bazaar 4G connection can
+      // easily burn three attempts inside one bad minute, and a write that gives
+      // up that early surfaces as "could not be saved" for a network blip.
+      if (isPermanent || newRetries >= MAX_ATTEMPTS) {
         db.runSync(
           `UPDATE outbox SET status = 'failed', error = ?, retries = ? WHERE id = ?`,
           [error.message || JSON.stringify(error), newRetries, row.id]
@@ -253,12 +306,20 @@ export async function replayOutbox(): Promise<{ processed: number; failed: numbe
 }
 
 /**
- * Get count of pending/failed items in outbox
+ * Drop a queued row because the caller already settled it directly.
+ *
+ * Deliberately narrow: it will not remove a row that is mid-flight in a drain,
+ * because deleting one there would let the drain's own bookkeeping resurrect it.
  */
+export function removeQueued(id: string): void {
+  getDb().runSync(`DELETE FROM outbox WHERE id = ? AND status != 'inflight'`, [id]);
+}
+
+/** How many writes are waiting, and how many have given up. */
 export function getOutboxStatus(): { pending: number; failed: number } {
   const db = getDb();
   const pendingRow = db.getFirstSync<{ count: number }>(
-    `SELECT COUNT(*) as count FROM outbox WHERE status = 'pending'`
+    `SELECT COUNT(*) as count FROM outbox WHERE status != 'failed'`
   );
   const failedRow = db.getFirstSync<{ count: number }>(
     `SELECT COUNT(*) as count FROM outbox WHERE status = 'failed'`
@@ -271,12 +332,60 @@ export function getOutboxStatus(): { pending: number; failed: number } {
 }
 
 /**
- * Setup NetInfo listener to auto-replay outbox when network connects
+ * The writes that gave up, with the real error from the server.
+ *
+ * Shown to the user rather than swallowed. "Your expense could not be saved,
+ * here is why, retry or discard" is recoverable; a queue that quietly drops a
+ * row is the failure users never forgive and never even find out about.
  */
-export function setupOutboxNetInfoListener(): () => void {
-  return NetInfo.addEventListener((state) => {
-    if (state.isConnected) {
-      replayOutbox();
-    }
-  });
+export function getFailedRows(): OutboxRow[] {
+  return getDb().getAllSync<OutboxRow>(
+    `SELECT * FROM outbox WHERE status = 'failed' ORDER BY created_at ASC`
+  );
 }
+
+/** Put a failed write back in the queue and try again from zero attempts. */
+export function retryFailed(id?: string): void {
+  const db = getDb();
+  if (id) {
+    db.runSync(`UPDATE outbox SET status = 'pending', retries = 0, error = NULL WHERE id = ?`, [id]);
+  } else {
+    db.runSync(`UPDATE outbox SET status = 'pending', retries = 0, error = NULL WHERE status = 'failed'`);
+  }
+  replayOutbox();
+}
+
+/**
+ * Throw a failed write away. Only ever on an explicit user action — never
+ * automatically, and never as a way of clearing a queue that looks stuck.
+ */
+export function discardFailed(id: string): void {
+  getDb().runSync(`DELETE FROM outbox WHERE id = ? AND status = 'failed'`, [id]);
+}
+
+/**
+ * Drain on reconnect AND on app foreground.
+ *
+ * NetInfo alone is not enough. Android freezes a backgrounded app's JS thread,
+ * so a connection that returns while the phone is in someone's pocket fires no
+ * usable event — the queue then sits full until the next write happens to
+ * trigger a flush. Coming back to the foreground is the moment the user is
+ * about to look at the numbers, which is exactly when they need to be true.
+ */
+export function setupOutboxListeners(): () => void {
+  const unsubscribeNet = NetInfo.addEventListener((state) => {
+    if (state.isConnected) replayOutbox();
+  });
+
+  const appStateSub = AppState.addEventListener('change', (next) => {
+    if (next === 'active') replayOutbox();
+  });
+
+  return () => {
+    unsubscribeNet();
+    appStateSub.remove();
+  };
+}
+
+/** @deprecated Use `setupOutboxListeners` — this one misses app foreground. */
+export const setupOutboxNetInfoListener = setupOutboxListeners;

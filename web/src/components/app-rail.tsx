@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   ArrowLeftRight,
+  ArrowRight,
   Bot,
   CalendarDays,
   CircleDollarSign,
@@ -25,6 +26,7 @@ import {
   Contact,
   Users,
   Wallet,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { signOutAction } from "@/lib/supabase/actions";
@@ -33,9 +35,41 @@ import { ThemeToggle } from "@/components/theme";
 import { formatName } from "@/lib/format";
 import { MODULES, resolveModules, type WorkspacePreset } from "@/lib/modules";
 import { useRailCollapsed } from "@/lib/rail-state";
+import { APP_VERSION_LABEL } from "@/lib/version";
 
 import type { LucideIcon } from "lucide-react";
 import type { UserSession } from "@/lib/session";
+
+/* -------------------------------------------------------------------------- *
+ * FBR card dismissal
+ *
+ * A per-DEVICE preference about a panel, so localStorage rather than the
+ * `preferences` table — the household does not share "I have read this".
+ * The custom event is what lets the card disappear the instant it is dismissed
+ * instead of on the next navigation; `storage` only fires in OTHER tabs.
+ * -------------------------------------------------------------------------- */
+const FILER_CARD_KEY = "bb-filer-card";
+const FILER_CARD_EVENT = "bb-filer-card-change";
+
+function subscribeToFilerCard(onChange: () => void) {
+  window.addEventListener(FILER_CARD_EVENT, onChange);
+  window.addEventListener("storage", onChange);
+  return () => {
+    window.removeEventListener(FILER_CARD_EVENT, onChange);
+    window.removeEventListener("storage", onChange);
+  };
+}
+
+/** Bring it back. Called from Settings → Preferences. */
+export function restoreFilerCard() {
+  window.localStorage.removeItem(FILER_CARD_KEY);
+  window.dispatchEvent(new Event(FILER_CARD_EVENT));
+}
+
+/** Whether it is currently hidden — so Settings can show the right control. */
+export function isFilerCardHidden() {
+  return window.localStorage.getItem(FILER_CARD_KEY) === "hidden";
+}
 
 type RailItem = {
   icon: LucideIcon;
@@ -126,6 +160,27 @@ export function AppRail({ session }: { session?: UserSession | null }) {
 
   // Non-filer until the ATL says otherwise — the honest default in Pakistan.
   const isFiler = session?.preferences?.is_filer ?? false;
+
+  /*
+   * Whether the FBR card is still wanted, read from localStorage.
+   *
+   * `useSyncExternalStore` rather than an effect: React Compiler rejects a
+   * synchronous setState in useEffect, and reading localStorage during render
+   * would mismatch the server, which renders nothing there. The server snapshot
+   * is deliberately `true` — the card is shown until the client says otherwise,
+   * so the first paint never flashes an empty gap for someone who kept it.
+   */
+  const filerCardHidden = React.useSyncExternalStore(
+    subscribeToFilerCard,
+    () => window.localStorage.getItem(FILER_CARD_KEY) === "hidden",
+    () => false,
+  );
+  const showFilerCard = !filerCardHidden;
+
+  const dismissFilerCard = () => {
+    window.localStorage.setItem(FILER_CARD_KEY, "hidden");
+    window.dispatchEvent(new Event(FILER_CARD_EVENT));
+  };
 
   const renderGroup = (label: string, items: RailItem[]) => (
     <div>
@@ -283,25 +338,91 @@ export function AppRail({ session }: { session?: UserSession | null }) {
        * state. The dashboard KPI row used to render it as "Rs 100", which is
        * what made that copy meaningless and why it was removed from there.
        */}
-      {!collapsed && (
+      {/*
+       * Filer status is a STATE, not a money value — the dashboard KPI row once
+       * rendered it as "Rs 100", which is what made that copy meaningless.
+       *
+       * Dismissible, and the dismissal STICKS. It is a standing fact about the
+       * household rather than news: once you have read it, a permanent card
+       * above your own name is just furniture. It comes back from Settings →
+       * Preferences, and the link says so, so dismissing it is not a one-way
+       * door. Stored in localStorage rather than the database because it is a
+       * per-device preference about a panel, not something the household shares.
+       */}
+      {!collapsed && showFilerCard && (
         <div className="shrink-0 px-4 pt-3">
-          <div className="border-navy-700 rounded-card border p-3">
-            <div className="flex items-center justify-between">
-              <span className="text-on-navy-muted text-[11px]">FBR status</span>
+          <div
+            className={cn(
+              "group/fbr relative overflow-hidden rounded-card border p-3",
+              // Brass for a filer, plain for a non-filer. Being on the ATL is
+              // the good outcome and the card should feel like it.
+              isFiler
+                ? "border-brass/30 bg-linear-to-br from-brass/[0.14] to-transparent"
+                : "border-navy-700 bg-navy-800/40",
+            )}
+          >
+            {/* A soft corner glow, clipped by the card. Cheap depth that does
+                not cost a shadow on a dark surface, where shadows do nothing. */}
+            <span
+              aria-hidden
+              className={cn(
+                "pointer-events-none absolute -end-6 -top-8 size-20 rounded-full blur-2xl",
+                isFiler ? "bg-brass/25" : "bg-white/[0.04]",
+              )}
+            />
+
+            <div className="relative flex items-center gap-2">
               <span
                 className={cn(
-                  "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                  isFiler ? "bg-gain-soft text-gain" : "bg-surface-subtle text-muted",
+                  "flex size-6 shrink-0 items-center justify-center rounded-full",
+                  isFiler ? "bg-brass/20 text-brass" : "bg-white/[0.06] text-on-navy-muted",
                 )}
               >
-                {isFiler ? "Filer" : "Non-filer"}
+                {isFiler ? <ShieldCheck size={13} /> : <Landmark size={13} />}
               </span>
+
+              <span className="text-on-navy-muted min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.1em]">
+                FBR status
+              </span>
+
+              <button
+                type="button"
+                onClick={dismissFilerCard}
+                aria-label="Hide the FBR status card"
+                title="Hide — you can bring it back from Settings → Preferences"
+                className="text-on-navy-muted hover:bg-white/[0.09] hover:text-on-navy -me-1 flex size-5 shrink-0 items-center justify-center rounded-full opacity-100 transition-all lg:opacity-0 lg:group-hover/fbr:opacity-100 lg:group-focus-within/fbr:opacity-100"
+              >
+                <X size={12} />
+              </button>
             </div>
-            <p className="text-on-navy-muted mt-1.5 text-[11px] leading-snug">
-              {isFiler
-                ? "Active on ATL · Saved on tax withholding"
-                : "Tax rate applies on returns"}
+
+            <p
+              className={cn(
+                "relative mt-2 text-[13px] font-semibold leading-none",
+                isFiler ? "text-brass" : "text-on-navy",
+              )}
+            >
+              {isFiler ? "Filer" : "Non-filer"}
             </p>
+
+            <p className="text-on-navy-muted relative mt-1.5 text-[10.5px] leading-snug">
+              {isFiler
+                ? "Active on the ATL — you pay the lower withholding rate."
+                : "You pay the higher withholding rate on most transactions."}
+            </p>
+
+            <Link
+              href="/tax"
+              className={cn(
+                "relative mt-2 inline-flex items-center gap-1 text-[10.5px] font-semibold transition-colors",
+                isFiler
+                  ? "text-brass/80 hover:text-brass"
+                  : "text-on-navy-muted hover:text-on-navy",
+              )}
+            >
+              {isFiler ? "See what it saves you" : "See what it costs you"}
+              <ArrowRight size={11} />
+            </Link>
           </div>
         </div>
       )}
@@ -384,6 +505,19 @@ export function AppRail({ session }: { session?: UserSession | null }) {
             </button>
           </div>
         </div>
+
+        {/*
+          The build, in the quietest place on the screen.
+          It belongs where a user already looks when something is wrong and they
+          are about to tell you about it — beside their own account, under
+          everything else. Not shown collapsed: at 72px it would be the widest
+          thing in the rail.
+        */}
+        {!collapsed && (
+          <p className="text-on-navy-muted/50 ltr mt-3 px-1 text-[10px] tracking-wide">
+            Bachat Book {APP_VERSION_LABEL}
+          </p>
+        )}
       </div>
     </aside>
   );

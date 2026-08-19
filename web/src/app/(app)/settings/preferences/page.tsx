@@ -9,6 +9,8 @@ import { ThemeToggle } from "@/components/theme";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
+import { isFilerCardHidden, restoreFilerCard } from "@/components/app-rail";
+import { APP_VERSION_LABEL } from "@/lib/version";
 
 export default function PreferencesSettingsPage() {
   const session = useSession();
@@ -152,12 +154,72 @@ export default function PreferencesSettingsPage() {
           />
         </div>
 
-        <div className="flex justify-end border-t border-border pt-5">
+        {/*
+          The sidebar card's dismissal, put back where it can be undone.
+          A control you can only turn off is a control you turn off once and then
+          quietly resent — the X in the rail names this screen, and this is it.
+          Not part of the form: it is a device preference in localStorage, so it
+          takes effect on click rather than on Save, and saying so avoids the
+          "I pressed Save and it did nothing" report.
+        */}
+        <div className="border-t border-border pt-5">
+          <FilerCardPreference />
+        </div>
+
+        <div className="flex items-center justify-between gap-4 border-t border-border pt-5">
+          <p className="text-faint ltr text-[11px]">Bachat Book {APP_VERSION_LABEL}</p>
           <Button type="submit" variant="primary" isLoading={loading}>
             Save Preferences
           </Button>
         </div>
       </form>
+    </div>
+  );
+}
+
+/** Show-again control for the rail's FBR card. Applies immediately. */
+function FilerCardPreference() {
+  /*
+   * `useSyncExternalStore` with a `false` server snapshot — reading
+   * localStorage during render would mismatch the server, and React Compiler
+   * rejects the setState-in-useEffect version of this.
+   */
+  const hidden = React.useSyncExternalStore(
+    (onChange) => {
+      window.addEventListener("bb-filer-card-change", onChange);
+      window.addEventListener("storage", onChange);
+      return () => {
+        window.removeEventListener("bb-filer-card-change", onChange);
+        window.removeEventListener("storage", onChange);
+      };
+    },
+    () => isFilerCardHidden(),
+    () => false,
+  );
+
+  return (
+    <div className="flex items-start justify-between gap-4">
+      <div className="min-w-0">
+        <p className="text-foreground text-[13px] font-medium">
+          FBR status card in the sidebar
+        </p>
+        <p className="text-muted mt-0.5 text-[11.5px] leading-snug">
+          {hidden
+            ? "Hidden on this device. It shows whether you are on the Active Taxpayer List and what that costs you."
+            : "Shown at the bottom of the sidebar. You can hide it from the card itself."}
+        </p>
+      </div>
+
+      <Button
+        type="button"
+        variant="secondary"
+        size="sm"
+        onClick={() => (hidden ? restoreFilerCard() : undefined)}
+        disabled={!hidden}
+        className="shrink-0"
+      >
+        {hidden ? "Show it again" : "Showing"}
+      </Button>
     </div>
   );
 }

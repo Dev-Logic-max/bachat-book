@@ -33,6 +33,7 @@ Hand-copying SQL here instead would drift from what is actually applied.
 | `m5_investments_and_wealth_ledger_sync` | `investments`, `investment_valuations`, `investment_payouts`, `household_integrations`. `sync_investment_current_value` trigger. Four policies each |
 | `enforce_tenant_scoped_foreign_keys` | **Security fix.** Replaced 14 single-column FKs with composite `(fk, household_id)` keys. See "A foreign key is part of the tenant boundary" below |
 | `index_tenant_scoped_foreign_keys` | Child-side indexes for those 14 composite keys, so a parent delete is not a sequential scan |
+| `wealth_tables_respect_read_only_workspaces` | The four Wealth tables were missing `workspace_is_active` on their write policies, so a read-only workspace could still write through the API |
 
 Modules M2 onward write their own migrations when they start. Do not write
 schema for a module before building it.

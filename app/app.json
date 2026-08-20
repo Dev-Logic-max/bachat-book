@@ -36,6 +36,7 @@
       "expo-secure-store",
       "./plugins/with-release-signing",
       "./plugins/with-build-tuning",
+      "./plugins/with-dev-variant",
       [
         "expo-camera",
         {

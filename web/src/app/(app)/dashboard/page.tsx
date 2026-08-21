@@ -34,9 +34,12 @@ import { deleteMovement } from "@/lib/ledger-actions";
 import { completeTask, uncompleteTask, type SettleInput } from "@/lib/task-actions";
 import { deriveStatus, dueLabel, dueTone, type TaskWithChecklist } from "@/lib/tasks";
 import { institutionLogo, monthBounds, netWorthSeries, rangePoints } from "@/lib/ledger";
+import { withPayments, type DebtWithPayments } from "@/lib/debts";
+import { netWorthBreakdown, netWorthLines } from "@/lib/net-worth";
 import { formatHijri, formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
+import type { Investment } from "@/lib/investments";
 import type { EntryAccountRef, EntryWithCategory } from "@/components/entry-row";
 import type { QuickEntryDraft } from "@/components/quick-add-modal";
 import type { TickerAsset } from "@/components/asset-ticker";
@@ -79,6 +82,16 @@ export default function DashboardPage() {
       >
     >
   >([]);
+  /*
+   * What the household owns and owes beyond its accounts.
+   *
+   * Loaded here because NET WORTH is not the same question as "what is in my
+   * accounts", and this page used to answer only the second one while labelling
+   * it as the first. A holding you own and money you are owed are both yours; a
+   * qarz you have taken is not.
+   */
+  const [holdings, setHoldings] = React.useState<Investment[]>([]);
+  const [debts, setDebts] = React.useState<DebtWithPayments[]>([]);
 
   const [range, setRange] = React.useState<RangeKey>("6M");
   const [query, setQuery] = React.useState("");
@@ -90,7 +103,16 @@ export default function DashboardPage() {
     let active = true;
 
     async function load() {
-      const [entriesRes, tasksRes, accountsRes, txRes, categoriesRes] = await Promise.all([
+      const [
+        entriesRes,
+        tasksRes,
+        accountsRes,
+        txRes,
+        categoriesRes,
+        holdingsRes,
+        debtsRes,
+        paymentsRes,
+      ] = await Promise.all([
         // Entries = income and expense from the single ledger. Transfers and
         // opening balances are excluded: neither is money earned or spent.
         supabase
@@ -126,6 +148,10 @@ export default function DashboardPage() {
           .eq("household_id", householdId)
           .order("date", { ascending: false }),
         supabase.from("categories").select("*").order("sort_order").order("name"),
+        // The two halves of net worth that are not account balances.
+        supabase.from("investments").select("*").eq("household_id", householdId),
+        supabase.from("debts").select("*").eq("household_id", householdId).eq("status", "open"),
+        supabase.from("debt_payments").select("*").eq("household_id", householdId),
       ]);
 
       if (!active) return;
@@ -136,6 +162,11 @@ export default function DashboardPage() {
         setAccounts(accountsRes.data as unknown as AccountWithInstitution[]);
       }
       if (txRes.data) setTransactions(txRes.data);
+      if (holdingsRes.data) setHoldings(holdingsRes.data);
+      // Payments attached here rather than in the reducer: what is still owed is
+      // DERIVED from principal minus payments, never stored, so the debts are
+      // useless on their own.
+      setDebts(withPayments(debtsRes.data ?? [], paymentsRes.data ?? []));
     }
 
     load();
@@ -144,26 +175,35 @@ export default function DashboardPage() {
     };
   }, [householdId, supabase, refreshKey]);
 
-  /*
-   * NET WORTH = SUM OF ACCOUNT BALANCES. Accounts only.
-   *
-   * Owner-confirmed: a linked entry is already counted once through its
-   * transaction, and an unlinked entry is money that does not sit in a tracked
-   * account — it shows in the quick-log figures and on /entries, never here. This
-   * is what keeps the hero number reconcilable against a bank statement.
-   *
-   * It used to be summed from quick_entries, which is why every account balance
-   * was invisible on this page and why "Net Saved" was identical to net worth.
-   */
   const liveAccounts = React.useMemo(
     () => accounts.filter((a) => !a.is_archived),
     [accounts],
   );
 
-  const netWorthPaisa = React.useMemo(
-    () => liveAccounts.reduce((sum, a) => sum + Number(a.balance_paisa), 0),
-    [liveAccounts],
+  /*
+   * NET WORTH AND CASH IN HAND ARE DIFFERENT NUMBERS.
+   *
+   * Net worth used to be "the sum of account balances", which made the hero
+   * figure and a KPI card two names for one quantity — and left the household's
+   * gold, its plot and the Rs 5,000 owed by a cousin out of a figure called
+   * "total net worth" entirely.
+   *
+   *   cash in hand  = live account balances. Reconcilable against a statement.
+   *   net worth     = cash + holdings at today's value + owed to you − you owe.
+   *
+   * Lending does not change net worth: the account went down and the receivable
+   * went up. Borrowing does not either: the cash arrived and the liability came
+   * with it. Writing a debt off DOES lower it, which is the honest answer — the
+   * money left when you lent it and it is not coming back.
+   *
+   * `lib/net-worth.ts` holds the rules so the dashboard, Reports and Zakat can
+   * never disagree about them.
+   */
+  const worth = React.useMemo(
+    () => netWorthBreakdown({ accounts, holdings, debts }),
+    [accounts, holdings, debts],
   );
+  const netWorthPaisa = worth.netWorthPaisa;
 
   const { from: monthFrom, to: monthTo } = React.useMemo(() => monthBounds(), []);
 
@@ -482,6 +522,11 @@ export default function DashboardPage() {
           range={range}
           onRangeChange={setRange}
           assets={assets}
+          composition={netWorthLines(worth).map((line) => ({
+            label: line.label,
+            valuePaisa: line.valuePaisa,
+            sign: line.sign,
+          }))}
           seriesEmptyMessage={
             accounts.length === 0
               ? "Add an account to start charting your net worth."
@@ -500,11 +545,23 @@ export default function DashboardPage() {
               footnote: "this month, across accounts",
             },
             {
-              // Month-scoped, NOT the net-worth variable. These were the same
-              // number before, which cannot be true of "saved" and "net worth".
-              label: "Saved this month",
-              valuePaisa: monthFlow.net,
-              footnote: "money in minus money out",
+              /*
+               * The figure this page never showed: what the household is
+               * actually holding, right now, across every live account.
+               *
+               * This slot used to be "Saved this month", which is `money in −
+               * money out` — the same quantity the two cards beside it already
+               * spelled out, and a number that says nothing about whether there
+               * is anything left. Net worth above it includes gold, plots and
+               * money owed to you; this is the part you can spend today.
+               */
+              label: "Cash in hand",
+              valuePaisa: worth.cashPaisa,
+              footnote:
+                liveAccounts.length === 1
+                  ? "in your account right now"
+                  : `across ${liveAccounts.length} accounts right now`,
+              href: "/accounts",
             },
             buildContextSlot({
               quickLog,

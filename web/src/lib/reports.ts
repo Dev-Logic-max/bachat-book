@@ -269,6 +269,79 @@ export function monthlySeries(movements: ReportMovement[], range: DateRange): Mo
 }
 
 /* -------------------------------------------------------------------------- *
+ * What was actually held, day by day
+ * -------------------------------------------------------------------------- */
+
+export type CashPoint = {
+  date: string;
+  /** Money in on that day, across accounts. Excludes transfers and openings. */
+  inPaisa: number;
+  outPaisa: number;
+  /** Every live account added up, as at the END of that day. */
+  closingPaisa: number;
+};
+
+/**
+ * The running cash position, one row per day that had movement.
+ *
+ * A different question from `monthlySeries`, and the one a printed report is
+ * usually being printed to answer: not "what did I earn and spend in August"
+ * but "how much did I actually have on the 12th". Flow figures cannot answer
+ * that — a month with Rs 0 net could have started at Rs 2,00,000 or at nothing.
+ *
+ * Computed BACKWARDS from today's balance rather than forwards from a starting
+ * figure, because today's balance is the one number that is certainly right:
+ * `sync_account_balance_trigger` maintains it from these very rows. Walking
+ * forward would need an opening position that nothing stores.
+ *
+ * TRANSFERS AND OPENING BALANCES ARE INCLUDED IN THE CLOSING FIGURE and
+ * excluded from the in/out columns. That looks inconsistent and is not: the
+ * money genuinely was in the account, so the closing position has to count it —
+ * but an ATM withdrawal is not income and a loan paid out is not spending, so
+ * neither belongs in a column headed "money in".
+ */
+export function cashPositionSeries(
+  movements: ReportMovement[],
+  range: DateRange,
+  currentCashPaisa: number,
+): CashPoint[] {
+  const days = new Map<string, { inPaisa: number; outPaisa: number; deltaPaisa: number }>();
+
+  for (const m of movements) {
+    if (m.date < range.from || m.date > range.to) continue;
+    const amount = Number(m.amount_paisa);
+    const day = days.get(m.date) ?? { inPaisa: 0, outPaisa: 0, deltaPaisa: 0 };
+
+    // Every movement shifts the balance, whatever it is called.
+    day.deltaPaisa += amount;
+
+    if (!m.is_opening && m.type !== "transfer") {
+      if (amount >= 0) day.inPaisa += amount;
+      else day.outPaisa += Math.abs(amount);
+    }
+    days.set(m.date, day);
+  }
+
+  // Everything that happened AFTER the range ends has to come off today's
+  // balance before the walk back can start, or every row is out by that much.
+  let running = currentCashPaisa;
+  for (const m of movements) {
+    if (m.date > range.to) running -= Number(m.amount_paisa);
+  }
+
+  // Newest first, subtracting each day's delta to reach the day before it.
+  const dates = [...days.keys()].sort((a, b) => (a < b ? 1 : -1));
+  const points: CashPoint[] = [];
+  for (const date of dates) {
+    const day = days.get(date)!;
+    points.push({ date, inPaisa: day.inPaisa, outPaisa: day.outPaisa, closingPaisa: running });
+    running -= day.deltaPaisa;
+  }
+
+  return points.reverse();
+}
+
+/* -------------------------------------------------------------------------- *
  * CSV
  * -------------------------------------------------------------------------- */
 

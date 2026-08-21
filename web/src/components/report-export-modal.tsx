@@ -10,6 +10,7 @@ import { formatPKR } from "@/lib/format";
 import {
   csvAmount,
   toCsv,
+  type CashPoint,
   type CategorySlice,
   type DateRange,
   type MonthPoint,
@@ -24,12 +25,22 @@ import {
  * different questions and a shopkeeper printing a category breakdown for their
  * accountant does not want 400 raw rows behind it.
  */
-export type ExportSection = "summary" | "categories" | "monthly" | "transactions";
+export type ExportSection =
+  | "summary"
+  | "categories"
+  | "monthly"
+  | "cash"
+  | "transactions";
 
 const SECTIONS: { key: ExportSection; label: string; hint: string }[] = [
   { key: "summary", label: "Summary", hint: "Money in, money out, and what you kept" },
   { key: "categories", label: "Category breakdown", hint: "Where the money went, largest first" },
   { key: "monthly", label: "Month by month", hint: "The trend across the whole range" },
+  {
+    key: "cash",
+    label: "Cash held, by date",
+    hint: "What was actually in your accounts at the end of each day",
+  },
   { key: "transactions", label: "Every transaction", hint: "The full list — the long one" },
 ];
 
@@ -38,6 +49,15 @@ export type ReportData = {
   totals: ReportTotals;
   categories: CategorySlice[];
   monthly: MonthPoint[];
+  /**
+   * The running balance, day by day.
+   *
+   * Flow figures cannot answer "how much did I actually have on the 12th" — a
+   * month that nets to zero could have started at Rs 2,00,000 or at nothing.
+   * This is the section that answers it, and it is why the export exists for
+   * anyone showing their position to a bank or an accountant.
+   */
+  cash: CashPoint[];
   movements: ReportMovement[];
   categoryNameById: Map<string, string>;
   accountNameById: Map<string, string>;
@@ -117,6 +137,25 @@ export function ReportExportModal({
           csvAmount(point.incomePaisa),
           csvAmount(point.expensePaisa),
           csvAmount(point.netPaisa),
+        ]);
+      }
+      rows.push([]);
+    }
+
+    if (chosen.has("cash")) {
+      rows.push(["CASH HELD, BY DATE"]);
+      rows.push([
+        "Date",
+        "Money in (PKR)",
+        "Money out (PKR)",
+        "Held at end of day (PKR)",
+      ]);
+      for (const point of data.cash) {
+        rows.push([
+          point.date,
+          csvAmount(point.inPaisa),
+          csvAmount(point.outPaisa),
+          csvAmount(point.closingPaisa),
         ]);
       }
       rows.push([]);
@@ -409,6 +448,49 @@ export function ReportPrintable({
               ))}
             </tbody>
           </table>
+        </section>
+      )}
+
+      {sections.has("cash") && data.cash.length > 0 && (
+        <section>
+          <h2 className="mb-1.5 text-[10px] font-bold uppercase tracking-widest">
+            Cash held, by date
+          </h2>
+          <table className="w-full border-collapse">
+            <thead>
+              <tr className="border-border border-b">
+                <th className="py-1 text-start font-semibold">Date</th>
+                <th className="py-1 text-end font-semibold">In</th>
+                <th className="py-1 text-end font-semibold">Out</th>
+                <th className="py-1 text-end font-semibold">Held at close</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.cash.map((point) => (
+                <tr key={point.date} className="border-border border-b">
+                  <td className="ltr py-1">{point.date}</td>
+                  <td className="tnum py-1 text-end">
+                    {point.inPaisa === 0 ? "—" : formatPKR(point.inPaisa)}
+                  </td>
+                  <td className="tnum py-1 text-end">
+                    {point.outPaisa === 0 ? "—" : formatPKR(point.outPaisa)}
+                  </td>
+                  <td className="tnum py-1 text-end font-semibold">
+                    {formatPKR(point.closingPaisa)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {/* Said on the printed page, because an accountant reading a column
+              headed "In" beside a closing balance that moved by more than it
+              will otherwise assume the report does not add up. */}
+          <p className="text-muted mt-1 text-[9px] leading-snug">
+            &ldquo;Held at close&rdquo; is every live account added up at the end of
+            that day, so it includes transfers and opening balances. The In and Out
+            columns exclude both — moving your own money between accounts is neither
+            earning nor spending.
+          </p>
         </section>
       )}
 

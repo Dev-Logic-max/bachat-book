@@ -26,6 +26,7 @@ import { Modal } from "@/components/ui/modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { formatPKR } from "@/lib/format";
+import { ledgerRefFor } from "@/lib/module-ledger";
 import type { Tables } from "@/lib/supabase/types";
 
 /**
@@ -68,6 +69,15 @@ function payoutVerdict(committee: Tables<"committees">): {
   };
 }
 
+/**
+ * The ledger rows my own cells wrote.
+ *
+ * `committee_payments.transaction_id` names the row but carries neither its DATE
+ * — which the deep link into Entries needs, since that screen opens on the
+ * current month — nor its ACCOUNT, which the edit form now offers to move.
+ */
+type LedgerRow = { id: string; date: string; type: string; account_id: string };
+
 export default function CommitteesPage() {
   const session = useSession();
   const supabase = createClient();
@@ -87,6 +97,7 @@ export default function CommitteesPage() {
 
   const [members, setMembers] = React.useState<CommitteeMember[]>([]);
   const [payments, setPayments] = React.useState<CommitteePayment[]>([]);
+  const [ledgerRows, setLedgerRows] = React.useState<Record<string, LedgerRow>>({});
   const [contacts, setContacts] = React.useState<Contact[]>([]);
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
 
@@ -179,6 +190,31 @@ export default function CommitteesPage() {
       setCommittees(data ?? []);
       setLoadError(null);
       setLoading(false);
+
+      /*
+       * The ledger rows behind my own cells, fetched second because their ids
+       * only exist once the payments are back. They carry the DATE the deep link
+       * needs and the ACCOUNT the edit form now offers to move.
+       */
+      const ids = (paymentRes.data ?? [])
+        .map((p) => p.transaction_id)
+        .filter((id): id is string => Boolean(id));
+
+      if (ids.length === 0) {
+        setLedgerRows({});
+        return;
+      }
+
+      const { data: rows } = await supabase
+        .from("transactions")
+        .select("id, date, type, account_id")
+        .eq("household_id", householdId)
+        .in("id", ids);
+
+      if (!active) return;
+      setLedgerRows(
+        Object.fromEntries(((rows ?? []) as LedgerRow[]).map((r) => [r.id, r])),
+      );
     }
 
     loadCommittees();
@@ -311,14 +347,14 @@ export default function CommitteesPage() {
     }
   };
 
-  const handleTogglePayout = async (committee: Tables<"committees">) => {
-    const nextStatus = !committee.payout_received;
-    setCommittees(
-      committees.map((c) => (c.id === committee.id ? { ...c, payout_received: nextStatus } : c))
-    );
-
-    await supabase.from("committees").update({ payout_received: nextStatus }).eq("id", committee.id);
-  };
+  /*
+   * `handleTogglePayout` used to sit here, unreferenced.
+   *
+   * It flipped `committees.payout_received` optimistically and never checked the
+   * write — a dead path to a field the grid now DERIVES from whether my payout
+   * cell exists. Two places claiming to know whether the payout arrived is one
+   * too many, and the dead one is the one that could disagree silently.
+   */
 
   return (
     <div className="space-y-6">
@@ -654,6 +690,11 @@ export default function CommitteesPage() {
         payment={cellModal?.payment ?? null}
         kind={cellModal?.kind ?? "contribution"}
         accounts={accounts}
+        ledgerRow={
+          cellModal?.payment?.transaction_id
+            ? (ledgerRows[cellModal.payment.transaction_id] ?? null)
+            : null
+        }
       />
 
       <ConfirmDeleteModal
@@ -684,7 +725,20 @@ export default function CommitteesPage() {
         recordMeta={deletingPayment?.paid_on}
         linkedRefs={
           deletingPayment?.transaction_id
-            ? [{ kind: "Account entry", label: "The entry this payment wrote" }]
+            ? [
+                {
+                  kind: "Account entry",
+                  label: `${deletingPayment.kind === "payout" ? "Payout received" : `Instalment ${deletingPayment.month_index}`} · ${formatPKR(Number(deletingPayment.amount_paisa))}`,
+                  // Named AND reachable. A dialog that lists what it is about to
+                  // destroy but offers no way to look at it asks for trust
+                  // rather than judgement.
+                  href: ledgerRefFor(
+                    deletingPayment.transaction_id,
+                    ledgerRows[deletingPayment.transaction_id]?.date ?? deletingPayment.paid_on,
+                    deletingPayment.kind === "payout" ? "income" : "expense",
+                  ).href,
+                },
+              ]
             : []
         }
         cascadeHint={

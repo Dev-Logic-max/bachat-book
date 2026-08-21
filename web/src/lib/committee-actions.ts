@@ -239,33 +239,70 @@ export async function recordCommitteePayment(
 export async function updateCommitteePayment(
   supabase: Client,
   committee: Committee,
+  member: CommitteeMember,
   payment: CommitteePayment,
-  input: { amountPaisa: number; paidOn: string; note: string | null },
+  input: {
+    amountPaisa: number;
+    paidOn: string;
+    note: string | null;
+    /**
+     * Where the money moved. Null keeps the cell on the grid only — and, when a
+     * leg already exists, removes it and puts the balance back.
+     *
+     * Only meaningful on MY OWN row; another member's instalment never passes
+     * through my accounts, so it is ignored for everyone else. Enforced here
+     * rather than trusted from the form: the picker is hidden for them, and a
+     * hidden control is not a guarantee.
+     */
+    accountId: string | null;
+  },
 ): Promise<void> {
+  const isPayout = payment.kind === "payout";
+  const signed = isPayout ? Math.abs(input.amountPaisa) : -Math.abs(input.amountPaisa);
+  const nextAccountId = member.is_me ? input.accountId : null;
+
+  let transactionId = payment.transaction_id;
+
+  if (payment.transaction_id && nextAccountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        account_id: nextAccountId,
+        amount_paisa: signed,
+        date: input.paidOn,
+        note: ledgerNote(committee, payment.kind, payment.month_index),
+      })
+      .eq("id", payment.transaction_id);
+    if (error) throw error;
+  } else if (payment.transaction_id && !nextAccountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", payment.transaction_id);
+    if (error) throw error;
+    transactionId = null;
+  } else if (!payment.transaction_id && nextAccountId) {
+    transactionId = await writeLeg(supabase, {
+      householdId: committee.household_id,
+      accountId: nextAccountId,
+      amountPaisa: input.amountPaisa,
+      date: input.paidOn,
+      note: ledgerNote(committee, payment.kind, payment.month_index),
+      kind: payment.kind,
+      isMine: member.is_me,
+    });
+  }
+
   const { error } = await supabase
     .from("committee_payments")
     .update({
       amount_paisa: input.amountPaisa,
       paid_on: input.paidOn,
       note: input.note,
+      transaction_id: transactionId,
     })
     .eq("id", payment.id);
   if (error) throw error;
-
-  if (payment.transaction_id) {
-    const isPayout = payment.kind === "payout";
-    const { error: legError } = await supabase
-      .from("transactions")
-      .update({
-        amount_paisa: isPayout
-          ? Math.abs(input.amountPaisa)
-          : -Math.abs(input.amountPaisa),
-        date: input.paidOn,
-        note: ledgerNote(committee, payment.kind, payment.month_index),
-      })
-      .eq("id", payment.transaction_id);
-    if (legError) throw legError;
-  }
 }
 
 /**

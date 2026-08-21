@@ -143,6 +143,9 @@ export async function createDebt(supabase: Client, input: DebtInput): Promise<De
       direction: input.direction,
       kind: input.kind,
       principal_paisa: input.principalPaisa,
+      // The day the money changed hands, which is not the day the row was typed.
+      // Without this a loan backdated to June said "lent" today on its own card.
+      opened_on: input.date,
       due_date: input.dueDate,
       opening_transaction_id: openingTransactionId,
       note: input.note,
@@ -163,34 +166,85 @@ export async function createDebt(supabase: Client, input: DebtInput): Promise<De
 }
 
 /**
- * Edit the record without touching the money.
+ * Edit the record AND the money it moved, together.
  *
- * `principal_paisa` is deliberately absent: changing it would leave the opening
- * transfer disagreeing with the debt it opened, and the account balance would
- * still hold the old figure. Correcting an amount means deleting and re-recording,
- * which is honest about the fact that the ledger has to move too.
+ * The amount and the account used to be un-editable here, on the grounds that
+ * changing either would leave the opening transfer disagreeing with the debt. It
+ * would — if only the debt were written. The answer is to write BOTH, which is
+ * what `updateInvestment` already does and what `sync_task_to_transaction`
+ * already guarantees for tasks: the pair can never hold two different values for
+ * one fact, so keep them in step rather than freezing one of them.
+ *
+ * Refusing the edit cost more than it saved. Correcting a typo meant deleting
+ * the debt — losing every repayment recorded against it — and a repayment
+ * recorded before an account existed could never be attached to one.
+ *
+ * ALL FOUR LEG CASES, and writing only three is the old entry/transaction bug:
+ * a leg that stays (update it), a leg whose account was cleared (delete it), no
+ * leg where an account has now been named (create it), and neither (nothing).
  */
 export async function updateDebt(
   supabase: Client,
-  debtId: string,
-  patch: {
-    counterpartyName?: string;
-    contactId?: string | null;
-    kind?: DebtKind;
-    dueDate?: string | null;
-    note?: string | null;
+  debt: Tables<"debts">,
+  next: {
+    counterpartyName: string;
+    contactId: string | null;
+    kind: DebtKind;
+    principalPaisa: number;
+    openedOn: string;
+    dueDate: string | null;
+    note: string | null;
+    /** Null detaches the ledger leg and puts the balance back. */
+    accountId: string | null;
   },
 ): Promise<void> {
+  let openingTransactionId = debt.opening_transaction_id;
+
+  if (debt.opening_transaction_id && next.accountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        account_id: next.accountId,
+        amount_paisa: openingSign(debt.direction) * Math.abs(next.principalPaisa),
+        date: next.openedOn,
+        note: openingNote(debt.direction, next.counterpartyName),
+        contact_id: next.contactId,
+      })
+      .eq("id", debt.opening_transaction_id);
+    if (error) throw error;
+  } else if (debt.opening_transaction_id && !next.accountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", debt.opening_transaction_id);
+    if (error) throw error;
+    openingTransactionId = null;
+  } else if (!debt.opening_transaction_id && next.accountId) {
+    openingTransactionId = await writeLeg(supabase, {
+      householdId: debt.household_id,
+      accountId: next.accountId,
+      amountPaisa: next.principalPaisa,
+      date: next.openedOn,
+      note: openingNote(debt.direction, next.counterpartyName),
+      contactId: next.contactId,
+      signedBy: openingSign(debt.direction),
+    });
+  }
+
   const { error } = await supabase
     .from("debts")
     .update({
-      ...(patch.counterpartyName !== undefined && { counterparty_name: patch.counterpartyName }),
-      ...(patch.contactId !== undefined && { contact_id: patch.contactId }),
-      ...(patch.kind !== undefined && { kind: patch.kind }),
-      ...(patch.dueDate !== undefined && { due_date: patch.dueDate }),
-      ...(patch.note !== undefined && { note: patch.note }),
+      counterparty_name: next.counterpartyName,
+      contact_id: next.contactId,
+      kind: next.kind,
+      principal_paisa: next.principalPaisa,
+      opened_on: next.openedOn,
+      due_date: next.dueDate,
+      note: next.note,
+      opening_transaction_id: openingTransactionId,
+      updated_at: new Date().toISOString(),
     })
-    .eq("id", debtId);
+    .eq("id", debt.id);
   if (error) throw error;
 }
 
@@ -329,29 +383,68 @@ export async function updateDebtPayment(
   supabase: Client,
   debt: Tables<"debts">,
   payment: Pick<DebtPayment, "id" | "transaction_id">,
-  input: { amountPaisa: number; date: string; note: string | null },
+  input: {
+    amountPaisa: number;
+    date: string;
+    note: string | null;
+    /**
+     * Where the money moved. Null records the repayment without touching a
+     * balance — and, when a leg already exists, removes it.
+     *
+     * This used to be missing entirely, on the reasoning that moving a repayment
+     * between accounts "is a delete-and-re-record". In practice it meant a
+     * repayment logged without an account could NEVER be attached to one: the
+     * only route was to delete the payment and type it again. All four cases are
+     * handled here instead, so a correction is a correction.
+     */
+    accountId: string | null;
+  },
 ): Promise<void> {
+  let transactionId = payment.transaction_id;
+
+  if (payment.transaction_id && input.accountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        account_id: input.accountId,
+        // Recomputed from the debt's direction rather than carried over, so an
+        // edit can never flip money the wrong way.
+        amount_paisa: repaymentSign(debt.direction) * Math.abs(input.amountPaisa),
+        date: input.date,
+        note: repaymentNote(debt.direction, debt.counterparty_name),
+        contact_id: debt.contact_id,
+      })
+      .eq("id", payment.transaction_id);
+    if (error) throw error;
+  } else if (payment.transaction_id && !input.accountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", payment.transaction_id);
+    if (error) throw error;
+    transactionId = null;
+  } else if (!payment.transaction_id && input.accountId) {
+    transactionId = await writeLeg(supabase, {
+      householdId: debt.household_id,
+      accountId: input.accountId,
+      amountPaisa: input.amountPaisa,
+      date: input.date,
+      note: repaymentNote(debt.direction, debt.counterparty_name),
+      contactId: debt.contact_id,
+      signedBy: repaymentSign(debt.direction),
+    });
+  }
+
   const { error } = await supabase
     .from("debt_payments")
     .update({
       amount_paisa: input.amountPaisa,
       date: input.date,
       note: input.note,
+      transaction_id: transactionId,
     })
     .eq("id", payment.id);
   if (error) throw error;
-
-  if (payment.transaction_id) {
-    const { error: legError } = await supabase
-      .from("transactions")
-      .update({
-        amount_paisa: repaymentSign(debt.direction) * Math.abs(input.amountPaisa),
-        date: input.date,
-        note: repaymentNote(debt.direction, debt.counterparty_name),
-      })
-      .eq("id", payment.transaction_id);
-    if (legError) throw legError;
-  }
 }
 
 /**

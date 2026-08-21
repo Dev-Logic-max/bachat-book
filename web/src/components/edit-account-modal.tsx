@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { ArrowRight, CalendarClock, Lock, Scale } from "lucide-react";
+import { ArrowRight, CalendarClock, Lock, Scale, TrendingDown } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
@@ -38,6 +38,7 @@ export function EditAccountModal({
   const [type, setType] = React.useState<AccountType>("checking");
   const [last4, setLast4] = React.useState("");
   const [isLocked, setIsLocked] = React.useState(false);
+  const [allowNegative, setAllowNegative] = React.useState(false);
   const [correctedBalance, setCorrectedBalance] = React.useState("");
   const [loading, setLoading] = React.useState(false);
 
@@ -50,6 +51,7 @@ export function EditAccountModal({
       setType(account.type as AccountType);
       setLast4(account.account_number_last4 ?? "");
       setIsLocked(account.is_locked);
+      setAllowNegative(account.allow_negative_balance);
       setCorrectedBalance((Number(account.balance_paisa) / 100).toString());
     }
   }
@@ -99,6 +101,7 @@ export function EditAccountModal({
           account_number_last4: last4.trim() || null,
           // Cash can never be locked; the DB rejects it too.
           is_locked: isCash ? false : isLocked,
+          allow_negative_balance: allowNegative,
         })
         .eq("id", account.id);
       if (error) throw error;
@@ -323,6 +326,34 @@ export function EditAccountModal({
             </span>
           </label>
         )}
+
+        {/*
+          The escape hatch for the funds rule.
+          Nothing may drive an account below zero — a cash box cannot hand over
+          money it is not holding, and Rs 2,00,000 lent from an account with
+          Rs 500 in it used to be accepted in silence. A current account with a
+          running finance facility genuinely can go negative, though, so the
+          exception belongs on the ACCOUNT rather than on each movement.
+        */}
+        <label className="border-border hover:bg-surface-subtle flex cursor-pointer items-start gap-2.5 rounded-control border p-3 transition-colors">
+          <input
+            type="checkbox"
+            checked={allowNegative}
+            onChange={(e) => setAllowNegative(e.target.checked)}
+            className="accent-navy-900 dark:accent-brass mt-0.5 size-4 shrink-0 rounded"
+          />
+          <span className="min-w-0">
+            <span className="text-foreground flex items-center gap-1.5 text-[12.5px] font-medium">
+              <TrendingDown size={13} />
+              Allow this account to go below zero
+            </span>
+            <span className="text-muted mt-0.5 block text-[11.5px] leading-snug">
+              {allowNegative
+                ? "On. Entries are accepted even when they take the balance negative — right for an overdraft or a running finance facility."
+                : "Off. Anything that would take this account below zero is refused, and the entry says how much it is short. Turn it on for an overdraft."}
+            </span>
+          </span>
+        </label>
       </div>
     </Modal>
   );

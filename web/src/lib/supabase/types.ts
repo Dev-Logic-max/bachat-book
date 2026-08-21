@@ -1050,6 +1050,15 @@ export type Database = {
            * right. Use `outstandingPaisa()` in lib/debts.ts.
            */
           principal_paisa: number;
+          /**
+           * The day the money actually changed hands.
+           *
+           * NOT `created_at`, which is the day the row was typed. A loan recorded
+           * today for money lent in June read as "lent 2026-08-21" on its own
+           * card, and the edit form had no date field because no column carried
+           * the fact. The opening transfer is stamped with this same date.
+           */
+          opened_on: string;
           due_date: string | null;
           status: DebtStatus;
           /**
@@ -1070,6 +1079,7 @@ export type Database = {
           direction: DebtDirection;
           kind?: DebtKind;
           principal_paisa: number;
+          opened_on?: string;
           due_date?: string | null;
           status?: DebtStatus;
           opening_transaction_id?: string | null;
@@ -1258,6 +1268,14 @@ export type Database = {
            * click, not an import or a REST call. Never true for `cash`.
            */
           is_locked: boolean;
+          /**
+           * Overdraft / running finance. False by default, and while it is false
+           * `assert_account_has_funds` refuses any movement that would drive
+           * `balance_paisa` below zero — a cash box cannot hand over money it is
+           * not holding, and lending Rs 2,00,000 from an account with Rs 500 in
+           * it used to be accepted in silence.
+           */
+          allow_negative_balance: boolean;
           /** Soft-deleted. Rows referencing it render a "Deleted account" tag. */
           deleted_at: string | null;
           created_at: string;
@@ -1274,6 +1292,7 @@ export type Database = {
           balance_paisa?: number;
           is_archived?: boolean;
           is_locked?: boolean;
+          allow_negative_balance?: boolean;
           deleted_at?: string | null;
           created_at?: string;
           updated_at?: string;

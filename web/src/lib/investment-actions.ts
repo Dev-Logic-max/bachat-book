@@ -318,20 +318,23 @@ async function realignOpeningValuation(
 }
 
 /**
- * Attach a standalone holding to an account after the fact.
+ * Write the ledger row for a holding that was recorded on its own.
  *
- * This is the deliberate, one-at-a-time path for holdings recorded while the
- * bridge was shut. Turning the switch on never does this in bulk: backfilling
- * twelve holdings would swing your balances by lakhs on one click, with no
- * screen able to say why.
+ * The deliberate, one-at-a-time path for holdings entered while the bridge was
+ * shut. Turning the switch on never does this in bulk: backfilling twelve
+ * holdings would swing the balances by lakhs on one click, with no screen able
+ * to say why. So the card grows a sync icon and each one is a decision.
+ *
+ * The account also becomes the holding's DEFAULT — the one every later payout
+ * and the eventual cash-in open on, still changeable per record.
  */
-export async function linkInvestmentToAccount(
+export async function syncHoldingToLedger(
   supabase: Client,
   holding: Tables<"investments">,
   accountId: string,
 ): Promise<void> {
   if (holding.funding_transaction_id) {
-    throw new Error("This holding is already linked to an account.");
+    throw new Error("This holding already has an entry in your accounts.");
   }
 
   const fundingTransactionId = await writeFundingLeg(supabase, {
@@ -357,6 +360,26 @@ export async function linkInvestmentToAccount(
     }
     throw error;
   }
+}
+
+/**
+ * Set the holding's default account WITHOUT writing anything to the ledger.
+ *
+ * Two different intentions wore one button before this split. "This certificate
+ * is a UBL certificate, open the account picker there next time" and "charge UBL
+ * Rs 20,00,000 for it, dated the day I bought it" are not the same request, and
+ * the second one is the surprising, irreversible-feeling half.
+ */
+export async function setHoldingDefaultAccount(
+  supabase: Client,
+  holding: Tables<"investments">,
+  accountId: string | null,
+): Promise<void> {
+  const { error } = await supabase
+    .from("investments")
+    .update({ account_id: accountId, updated_at: new Date().toISOString() })
+    .eq("id", holding.id);
+  if (error) throw error;
 }
 
 /** Every ledger row this holding is responsible for. */
@@ -513,6 +536,114 @@ export async function recordPayout(
       valuePaisa: Number(holding.current_value_paisa) + Math.abs(input.amountPaisa),
       unitPricePaisa: null,
       note: "Profit reinvested",
+    });
+  }
+}
+
+/**
+ * Correct a payout that is already recorded — including which account it landed
+ * in, and whether it landed anywhere at all.
+ *
+ * There was no path to this at all before. The pencil on a profit row opened a
+ * BLANK "Record profit" form for the parent holding, so a payment typed as
+ * 115000 instead of 11500 could only be deleted and retyped, and a payment
+ * recorded before syncing was switched on could never be attached to the account
+ * it actually arrived in.
+ *
+ * THREE things move together here, and getting any one of them wrong leaves the
+ * holding and the bank disagreeing:
+ *
+ *   the ledger leg   — all four cases. Naming an account where there was none
+ *                      creates the income row; clearing it deletes the row and
+ *                      puts the balance back; changing it moves the money.
+ *   the payout row   — amount, date, destination, account, note.
+ *   the holding value— reinvested profit GREW the holding when it was recorded.
+ *                      Editing the amount, or flipping it to "came to me", has
+ *                      to walk that growth back or the money exists in neither
+ *                      the bank nor the certificate.
+ *
+ * The valuation correction is dated TODAY rather than rewriting the original
+ * day, exactly as `deletePayout` does: the holding really was worth that then,
+ * and history is a record, not a draft.
+ */
+export async function updatePayout(
+  supabase: Client,
+  holding: Tables<"investments">,
+  payout: Tables<"investment_payouts">,
+  input: PayoutInput,
+): Promise<void> {
+  const amountPaisa = Math.abs(input.amountPaisa);
+  // Reinvested profit never reaches an account, so it can never carry a leg.
+  const nextAccountId = input.reinvest ? null : input.accountId;
+
+  let transactionId = payout.transaction_id;
+
+  if (payout.transaction_id && nextAccountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .update({
+        account_id: nextAccountId,
+        amount_paisa: amountPaisa,
+        date: input.date,
+        note: `Profit from ${holding.name}`,
+      })
+      .eq("id", payout.transaction_id);
+    if (error) throw error;
+  } else if (payout.transaction_id && !nextAccountId) {
+    const { error } = await supabase
+      .from("transactions")
+      .delete()
+      .eq("id", payout.transaction_id);
+    if (error) throw error;
+    transactionId = null;
+  } else if (!payout.transaction_id && nextAccountId) {
+    const { data, error } = await supabase
+      .from("transactions")
+      .insert({
+        household_id: holding.household_id,
+        account_id: nextAccountId,
+        amount_paisa: amountPaisa,
+        type: "income",
+        date: input.date,
+        note: `Profit from ${holding.name}`,
+      })
+      .select("id")
+      .single();
+    if (error) throw error;
+    transactionId = data.id;
+  }
+
+  const { error } = await supabase
+    .from("investment_payouts")
+    .update({
+      date: input.date,
+      amount_paisa: amountPaisa,
+      destination: input.reinvest ? "reinvested" : "received",
+      account_id: nextAccountId,
+      transaction_id: transactionId,
+      note: input.note,
+    })
+    .eq("id", payout.id);
+  if (error) throw error;
+
+  /*
+   * How much the holding's value has to move.
+   *
+   * Only REINVESTED profit ever sat inside `current_value_paisa`, so the delta
+   * is "what is reinvested now" minus "what was reinvested before". Editing a
+   * received payout leaves the value alone; flipping reinvested → received takes
+   * the whole old amount back out.
+   */
+  const wasInside = payout.destination === "reinvested" ? Number(payout.amount_paisa) : 0;
+  const isInside = input.reinvest ? amountPaisa : 0;
+  const delta = isInside - wasInside;
+
+  if (delta !== 0) {
+    await recordValuation(supabase, holding, {
+      asOf: todayISODate(),
+      valuePaisa: Math.max(0, Number(holding.current_value_paisa) + delta),
+      unitPricePaisa: null,
+      note: delta > 0 ? "Profit reinvested" : "Reinvested profit corrected",
     });
   }
 }

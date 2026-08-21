@@ -16,7 +16,11 @@ import { formatPKR } from "@/lib/format";
 import { institutionLogo, todayISO } from "@/lib/ledger";
 import { INVESTMENT_KINDS, PAYOUT_FREQUENCIES, investmentKind } from "@/lib/investments";
 import { createInvestment, updateInvestment } from "@/lib/investment-actions";
+import { checkFunds } from "@/lib/module-ledger";
 import type { InvestmentKind, PayoutFrequency, Tables } from "@/lib/supabase/types";
+
+/** Sentinel for "this holding was never paid for out of a tracked account". */
+const NO_ACCOUNT = "__none__";
 
 /* -------------------------------------------------------------------------- *
  * Rupee <-> paisa at the form boundary
@@ -111,7 +115,7 @@ export function InvestmentModal({
       setUnitCost(toRupees(holding.unit_cost_paisa));
       setTotalCost(toRupees(holding.principal_paisa));
       setValueToday(toRupees(holding.current_value_paisa));
-      setAccountId(holding.account_id ?? "");
+      setAccountId(holding.account_id ?? NO_ACCOUNT);
       setNote(holding.note ?? "");
     } else {
       setKind("nss");
@@ -127,7 +131,7 @@ export function InvestmentModal({
       setUnitCost("");
       setTotalCost("");
       setValueToday("");
-      setAccountId("");
+      setAccountId(NO_ACCOUNT);
       setNote("");
     }
   }
@@ -187,6 +191,29 @@ export function InvestmentModal({
   const accountOptions = accountSelectOptions(accounts, { direction: "expense" });
   const usableAccounts = accountOptions.filter((o) => !o.disabled);
 
+  const resolvedAccountId = accountId === NO_ACCOUNT ? null : accountId || null;
+
+  /*
+   * Can the account afford it?
+   *
+   * The gap this closes, in the owner's words: "if the amount of 2000000 is not
+   * present in accounts, how would it get deducted from there". It could not,
+   * and nothing said so — the holding saved, the balance went deeply negative,
+   * and every figure built on that account was wrong from then on.
+   *
+   * On an EDIT the account already carries the old funding leg, so what is being
+   * asked for is the DIFFERENCE. Treating a Rs 20,00,000 holding whose name is
+   * being corrected as a fresh Rs 20,00,000 charge would refuse the edit.
+   */
+  const selectedAccount = accounts.find((a) => a.id === resolvedAccountId);
+  const alreadyCharged =
+    Boolean(holding?.funding_transaction_id) && holding?.account_id === resolvedAccountId;
+  const funds = checkFunds(
+    selectedAccount,
+    -principalPaisa,
+    alreadyCharged ? -Number(holding?.principal_paisa ?? 0) : 0,
+  );
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -198,12 +225,8 @@ export function InvestmentModal({
       showToast({ type: "error", title: "How much went in?", description: "Enter what you paid for it." });
       return;
     }
-    if (syncEnabled && !accountId) {
-      showToast({
-        type: "error",
-        title: "Which account paid for it?",
-        description: "Account syncing is on, so every holding has to name where the money came from.",
-      });
+    if (funds.message) {
+      showToast({ type: "error", title: "Not enough in that account", description: funds.message });
       return;
     }
 
@@ -222,7 +245,9 @@ export function InvestmentModal({
         unitLabel: amountMode === "units" && units.trim() !== "" ? unitLabel.trim() || "units" : null,
         unitCostPaisa: amountMode === "units" && unitCost.trim() !== "" ? toPaisa(unitCost) : null,
         note: note.trim() || null,
-        accountId: syncEnabled ? accountId || null : holding?.account_id ?? null,
+        // With the bridge shut the picker is not shown at all, so whatever the
+        // holding already points at is kept rather than silently cleared.
+        accountId: syncEnabled ? resolvedAccountId : (holding?.account_id ?? null),
       };
 
       if (holding) {
@@ -419,14 +444,43 @@ export function InvestmentModal({
               holding on its own.
             </p>
           ) : (
-            <RichSelect
-              label="Paid from"
-              value={accountId}
-              onChange={setAccountId}
-              options={accountOptions}
-              placeholder="Choose the account…"
-              hint="This much will be taken out of that account. It is recorded as savings moving, never as spending."
-            />
+            <>
+              {/*
+                NOT REQUIRED, even with syncing on.
+
+                It used to be, which made the gold your mother has owned for
+                thirty years unrecordable: the form demanded an account for money
+                that never came out of one, and the only way round it was to
+                switch a household-wide setting off and back on. "No account" is
+                a real answer, and the sync icon on the card is there for the day
+                it stops being the right one.
+              */}
+              <RichSelect
+                label="Paid from"
+                value={accountId}
+                onChange={setAccountId}
+                options={[
+                  {
+                    value: NO_ACCOUNT,
+                    label: "No account — just track it",
+                    description: "Gold, a plot or shares you already owned before using the app",
+                  },
+                  ...accountOptions,
+                ]}
+                placeholder="Choose the account…"
+                hint={
+                  resolvedAccountId
+                    ? "This much comes out of that account, and it becomes the account this holding's profit and cash-in open on. It is recorded as savings moving, never as spending."
+                    : "Nothing is taken out of any account. You can add it to one later from the card."
+                }
+              />
+              {funds.message && (
+                <p className="border-loss/25 bg-loss/8 text-loss rounded-control flex items-start gap-2 border px-3 py-2.5 text-[11.5px] leading-relaxed">
+                  <Info size={14} className="mt-px shrink-0" />
+                  <span>{funds.message}</span>
+                </p>
+              )}
+            </>
           )
         ) : (
           <p className="border-border bg-surface-subtle text-muted rounded-control flex items-start gap-2 border px-3 py-2.5 text-[11.5px] leading-relaxed">

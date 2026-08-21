@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Banknote, Coins, Info, Link2, LogOut, Trash2 } from "lucide-react";
+import { Banknote, Coins, Info, LogOut, Trash2 } from "lucide-react";
 
 import { accountSelectOptions, type AccountWithInstitution } from "@/components/account-options";
+import { LedgerRefChip } from "@/components/ledger-ref-chip";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
@@ -11,15 +12,17 @@ import { Modal } from "@/components/ui/modal";
 import { RichSelect } from "@/components/ui/select";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
-import { formatPKR, formatPercent } from "@/lib/format";
+import { formatPKR } from "@/lib/format";
 import { todayISO } from "@/lib/ledger";
-import { investmentKind } from "@/lib/investments";
+/* No funds check in this file: every movement it writes ARRIVES in an account —
+   profit landing, a holding cashed in — and money coming in can never leave an
+   account short. The outgoing side lives in `investment-modal.tsx`. */
 import {
   closeInvestment,
   deletePayout,
-  linkInvestmentToAccount,
   recordPayout,
   recordValuation,
+  updatePayout,
 } from "@/lib/investment-actions";
 import type { InvestmentStatus, Tables } from "@/lib/supabase/types";
 
@@ -299,12 +302,18 @@ function ValueSparkline({ points }: { points: Tables<"investment_valuations">[] 
  * ========================================================================== */
 
 /**
- * Profit that arrived.
+ * Profit that arrived — recorded, or corrected.
  *
  * The one thing this form must get right is REINVESTED vs RECEIVED. Reinvested
  * money never reaches you, so it writes nothing to the ledger and instead grows
  * the holding. Received money is genuinely new — the only part of an investment
  * that is income — so with the bridge open it lands in an account as income.
+ *
+ * EDITING ONE PAYMENT IS A REAL MODE HERE. The pencil on a profit row used to
+ * open this form blank, against the parent holding: it looked like an edit,
+ * behaved like "add another", and a profit typed as 115000 instead of 11500 had
+ * no correction path at all. With `payout` set, every field is seeded from that
+ * row and saving moves the payment AND the income entry it wrote, together.
  */
 export function PayoutModal({
   isOpen,
@@ -314,6 +323,8 @@ export function PayoutModal({
   accounts,
   syncEnabled,
   payouts,
+  payout = null,
+  payoutLedgerRow = null,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -323,6 +334,10 @@ export function PayoutModal({
   syncEnabled: boolean;
   /** This holding's existing payouts, newest first. */
   payouts: Tables<"investment_payouts">[];
+  /** Set to EDIT one payment rather than add a new one. */
+  payout?: Tables<"investment_payouts"> | null;
+  /** The ledger row that payment wrote, when it wrote one. */
+  payoutLedgerRow?: { id: string; date: string; type: string } | null;
 }) {
   const supabase = createClient();
   const { showToast } = useToast();
@@ -335,16 +350,26 @@ export function PayoutModal({
   const [submitting, setSubmitting] = React.useState(false);
   const [removing, setRemoving] = React.useState<string | null>(null);
 
-  const seedKey = `${isOpen}:${holding?.id ?? "none"}`;
+  const isEdit = Boolean(payout);
+
+  const seedKey = `${isOpen}:${holding?.id ?? "none"}:${payout?.id ?? "new"}`;
   const [seeded, setSeeded] = React.useState(seedKey);
   if (seeded !== seedKey) {
     setSeeded(seedKey);
-    setDate(todayISO());
-    setAmount("");
-    setNote("");
-    // A fund rolls profit up by default; a certificate pays it out.
-    setReinvest(holding?.kind === "mutual_fund");
-    setAccountId(holding?.account_id ?? "");
+    if (payout) {
+      setDate(payout.date);
+      setAmount(String(Number(payout.amount_paisa) / 100));
+      setNote(payout.note ?? "");
+      setReinvest(payout.destination === "reinvested");
+      setAccountId(payout.account_id ?? "");
+    } else {
+      setDate(todayISO());
+      setAmount("");
+      setNote("");
+      // A fund rolls profit up by default; a certificate pays it out.
+      setReinvest(holding?.kind === "mutual_fund");
+      setAccountId(holding?.account_id ?? "");
+    }
   }
 
   const removePayout = async (payout: Tables<"investment_payouts">) => {
@@ -378,6 +403,17 @@ export function PayoutModal({
   // a lock only stops money leaving.
   const accountOptions = accountSelectOptions(accounts, { direction: "income" });
 
+  /*
+   * When the account picker exists at all.
+   *
+   * The household switch decides it for NEW payments. An existing payment that
+   * already wrote an entry always shows it, even with syncing off — otherwise
+   * turning the switch off would strand a real ledger row with no way to move
+   * or detach it, which is the opposite of what "off" is supposed to mean.
+   */
+  const showAccount = !reinvest && (syncEnabled || Boolean(payout?.transaction_id));
+  const resolvedAccountId = reinvest ? null : showAccount ? accountId || null : null;
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const amountPaisa = toPaisa(amount);
@@ -386,30 +422,37 @@ export function PayoutModal({
       showToast({ type: "error", title: "How much came in?", description: "Enter the profit amount." });
       return;
     }
-    if (!reinvest && syncEnabled && !accountId) {
-      showToast({
-        type: "error",
-        title: "Where did it land?",
-        description: "Account syncing is on, so name the account it arrived in — or mark it reinvested.",
-      });
-      return;
-    }
-
+    /*
+     * No account is a VALID answer, and it is not asked about again here.
+     *
+     * The form used to refuse a payment with no account whenever the household
+     * switch was on — while showing "No account — just track it" in the very
+     * dropdown it was refusing. Profit paid in cash, or into an account nobody
+     * is tracking, is an ordinary thing, and the sync icon on the row is there
+     * for the day it needs filing.
+     */
     setSubmitting(true);
     try {
-      await recordPayout(supabase, holding, {
+      const input = {
         date,
         amountPaisa,
-        accountId: reinvest ? null : syncEnabled ? accountId || null : null,
+        accountId: resolvedAccountId,
         reinvest,
         note: note.trim() || null,
-      });
+      };
+
+      if (payout) {
+        await updatePayout(supabase, holding, payout, input);
+      } else {
+        await recordPayout(supabase, holding, input);
+      }
+
       showToast({
         type: "success",
-        title: reinvest ? "Profit reinvested" : "Profit recorded",
+        title: payout ? "Payment updated" : reinvest ? "Profit reinvested" : "Profit recorded",
         description: reinvest
-          ? "Added to what the holding is worth. No account was touched."
-          : syncEnabled && accountId
+          ? "Counted inside what the holding is worth. No account was touched."
+          : resolvedAccountId
             ? "Logged as income in that account."
             : "Logged against this holding only.",
       });
@@ -418,7 +461,7 @@ export function PayoutModal({
     } catch (err) {
       showToast({
         type: "error",
-        title: "Could not record it",
+        title: payout ? "Could not save it" : "Could not record it",
         description: err instanceof Error ? err.message : "Something went wrong.",
       });
     } finally {
@@ -430,7 +473,7 @@ export function PayoutModal({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Record profit"
+      title={payout ? "Edit this payment" : "Record profit"}
       subtitle={holding.name}
       icon={<Banknote size={18} />}
       onSubmit={handleSubmit}
@@ -440,7 +483,7 @@ export function PayoutModal({
             Cancel
           </Button>
           <Button type="submit" variant="primary" isLoading={submitting}>
-            Save
+            {payout ? "Save changes" : "Save"}
           </Button>
         </>
       }
@@ -484,19 +527,41 @@ export function PayoutModal({
           <p className="border-border bg-surface-subtle text-muted rounded-control flex items-start gap-2 border px-3 py-2.5 text-[11.5px] leading-relaxed">
             <Info size={14} className="text-brass-strong mt-px shrink-0" />
             <span>
-              No cash reached you, so nothing is written to your accounts. The
-              holding is worth {formatPKR(Number(holding.current_value_paisa) + toPaisa(amount))} after this.
+              No cash reached you, so nothing is written to your accounts.
+              {payout?.transaction_id
+                ? " The income entry this payment wrote will be removed and the balance put back."
+                : ` The holding is worth ${formatPKR(Number(holding.current_value_paisa) + toPaisa(amount))} after this.`}
             </span>
           </p>
-        ) : syncEnabled ? (
-          <RichSelect
-            label="Landed in"
-            value={accountId}
-            onChange={setAccountId}
-            options={accountOptions}
-            placeholder="Choose the account…"
-            hint="Recorded as income — unlike the money you put in, profit really is new."
-          />
+        ) : showAccount ? (
+          <>
+            <RichSelect
+              label="Landed in"
+              value={accountId}
+              onChange={setAccountId}
+              options={[
+                {
+                  value: "",
+                  label: "No account — just track it",
+                  description: "Records the profit without moving a balance",
+                },
+                ...accountOptions,
+              ]}
+              placeholder="Choose the account…"
+              hint={
+                payout?.transaction_id
+                  ? "Changing this moves the income entry. Clearing it removes the entry and puts the balance back."
+                  : "Recorded as income — unlike the money you put in, profit really is new."
+              }
+            />
+            {payoutLedgerRow && (
+              <LedgerRefChip
+                transactionId={payoutLedgerRow.id}
+                date={payoutLedgerRow.date}
+                type={payoutLedgerRow.type as "income" | "expense" | "transfer"}
+              />
+            )}
+          </>
         ) : (
           <p className="text-faint text-[11px] leading-relaxed">
             Account syncing is off, so this is recorded against the holding only
@@ -512,12 +577,12 @@ export function PayoutModal({
         />
 
         {/*
-          Recorded payouts, with a way to undo one.
-          Without this there was no correction path at all: a profit typed as
-          115000 instead of 11500 was permanent, and it feeds the lifetime return
-          on the card and every figure in the profit roll-up.
+          The other payments on this holding, for context.
+          Hidden while EDITING one of them: a list of siblings with delete
+          buttons, sitting under a form that is already editing a specific row,
+          is an invitation to delete the wrong thing.
         */}
-        {payouts.length > 0 && (
+        {!isEdit && payouts.length > 0 && (
           <div className="border-border border-t pt-4">
             <p className="text-muted mb-2 text-[11px] font-semibold uppercase tracking-widest">
               Already recorded
@@ -611,15 +676,9 @@ export function CloseInvestmentModal({
       showToast({ type: "error", title: "Check the amount", description: "It cannot be negative." });
       return;
     }
-    if (syncEnabled && !accountId) {
-      showToast({
-        type: "error",
-        title: "Where did the money go?",
-        description: "Account syncing is on, so name the account it landed in.",
-      });
-      return;
-    }
-
+    // No account is a valid answer here too — a plot sold for cash, or into an
+    // account nobody is tracking. Refusing it while offering it in the dropdown
+    // is the contradiction this used to ship.
     setSubmitting(true);
     try {
       await closeInvestment(supabase, holding, {
@@ -713,7 +772,14 @@ export function CloseInvestmentModal({
             label="Money landed in"
             value={accountId}
             onChange={setAccountId}
-            options={accountOptions}
+            options={[
+              {
+                value: "",
+                label: "No account — just track it",
+                description: "Sold for cash, or into an account you do not track here",
+              },
+              ...accountOptions,
+            ]}
             placeholder="Choose the account…"
             hint="Recorded as savings coming back, not as income — this money was always yours."
           />
@@ -735,118 +801,14 @@ export function CloseInvestmentModal({
   );
 }
 
-/* ========================================================================== *
- * Attach a standalone holding to an account
- * ========================================================================== */
-
-/**
- * The deliberate, one-at-a-time path for holdings recorded before the bridge was
- * opened. Turning the switch on never does this in bulk — twelve holdings would
- * swing the balances by lakhs on one click with nothing on screen to explain it.
+/*
+ * `LinkHoldingModal` used to live here.
+ *
+ * It has been replaced by the shared `LinkToAccountModal`, which Udhaar and
+ * Investments both use. Three reasons the shared one is better than the copy it
+ * replaced: it checks whether the account can actually afford the movement
+ * (this one did not, so a Rs 20,00,000 holding could be charged to an account
+ * holding Rs 500), it shows the amount and the date as facts rather than
+ * describing them in a paragraph of warning prose, and there is now one place
+ * where that dialog can be got wrong instead of three.
  */
-export function LinkHoldingModal({
-  isOpen,
-  onClose,
-  onSaved,
-  holding,
-  accounts,
-}: {
-  isOpen: boolean;
-  onClose: () => void;
-  onSaved: () => void;
-  holding: Holding | null;
-  accounts: AccountWithInstitution[];
-}) {
-  const supabase = createClient();
-  const { showToast } = useToast();
-
-  const [accountId, setAccountId] = React.useState("");
-  const [submitting, setSubmitting] = React.useState(false);
-
-  const seedKey = `${isOpen}:${holding?.id ?? "none"}`;
-  const [seeded, setSeeded] = React.useState(seedKey);
-  if (seeded !== seedKey) {
-    setSeeded(seedKey);
-    setAccountId("");
-  }
-
-  if (!holding) return null;
-
-  const accountOptions = accountSelectOptions(accounts, { direction: "expense" });
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!accountId) {
-      showToast({ type: "error", title: "Pick an account", description: "Choose where the money came from." });
-      return;
-    }
-
-    setSubmitting(true);
-    try {
-      await linkInvestmentToAccount(supabase, holding, accountId);
-      showToast({
-        type: "success",
-        title: "Linked",
-        description: `${formatPKR(Number(holding.principal_paisa))} taken out of that account.`,
-      });
-      onSaved();
-      onClose();
-    } catch (err) {
-      showToast({
-        type: "error",
-        title: "Could not link it",
-        description: err instanceof Error ? err.message : "Something went wrong.",
-      });
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Link to an account"
-      subtitle={holding.name}
-      icon={<Link2 size={18} />}
-      onSubmit={handleSubmit}
-      footer={
-        <>
-          <Button type="button" variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button type="submit" variant="primary" isLoading={submitting}>
-            Link and deduct
-          </Button>
-        </>
-      }
-    >
-      <div className="space-y-4">
-        <p className="text-muted text-[12px] leading-relaxed">
-          This holding was recorded on its own, so no account was ever charged for
-          it. Linking it now takes{" "}
-          <span className="tnum text-foreground font-semibold">
-            {formatPKR(Number(holding.principal_paisa))}
-          </span>{" "}
-          out of the account you choose, dated{" "}
-          <span className="ltr">{holding.purchase_date}</span> — the day you bought
-          it, not today.
-        </p>
-
-        <RichSelect
-          label="Money came from"
-          value={accountId}
-          onChange={setAccountId}
-          options={accountOptions}
-          placeholder="Choose the account…"
-        />
-
-        <p className="text-faint text-[11px] leading-relaxed">
-          Only do this if that account really did pay for it. For{" "}
-          {investmentKind(holding.kind).label.toLowerCase()} you already owned
-          before using Bachat Book, leave it unlinked.
-        </p>
-      </div>
-    </Modal>
-  );
-}

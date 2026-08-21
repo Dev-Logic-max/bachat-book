@@ -45,8 +45,22 @@ export function NetWorthHero({
   onRangeChange,
   assets = [],
   seriesEmptyMessage,
+  composition = [],
 }: {
   netWorthPaisa: number;
+  /**
+   * What the headline figure is made of, in order, only the lines that apply.
+   *
+   * A hero number nobody can decompose is a number nobody trusts — and this one
+   * is now built from four places instead of one, so "why is this not what my
+   * bank says" needs an answer on the screen rather than in a support reply.
+   * Empty renders nothing, which is right for a household that only has cash.
+   */
+  composition?: {
+    label: string;
+    valuePaisa: number;
+    sign: 1 | -1;
+  }[];
   deltaPaisa: number;
   /**
    * Omit when there is no prior baseline to compare against. A brand-new workspace
@@ -160,6 +174,33 @@ export function NetWorthHero({
                 this month
               </span>
             </div>
+
+            {/*
+              What the figure is made of — shown only when there is more than
+              cash in it. With one line it would restate the number above itself.
+            */}
+            {composition.length > 1 && (
+              <div className="mt-3.5 flex flex-wrap items-center gap-x-3.5 gap-y-1.5">
+                {composition.map((line, i) => (
+                  <span
+                    key={line.label}
+                    className="text-on-navy-muted inline-flex items-baseline gap-1.5 text-[11.5px]"
+                  >
+                    {/* The operator between the lines, so the sum reads as a sum
+                        rather than as four unrelated facts side by side. */}
+                    {i > 0 && (
+                      <span className="text-on-navy-muted/60" aria-hidden>
+                        {line.sign === 1 ? "+" : "−"}
+                      </span>
+                    )}
+                    <span className="tnum text-on-navy font-medium">
+                      {formatPKRCompact(line.valuePaisa)}
+                    </span>
+                    {line.label}
+                  </span>
+                ))}
+              </div>
+            )}
 
             {/* Per-account breakdown of the figure above it. */}
             <AssetTicker assets={assets} />

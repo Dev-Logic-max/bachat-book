@@ -1,7 +1,8 @@
 "use client";
 
 import * as React from "react";
-import { AlertTriangle, Link2 } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, ArrowUpRight, Link2 } from "lucide-react";
 import { Modal } from "@/components/ui/modal";
 import { Button } from "@/components/ui/button";
 import { formatPKR } from "@/lib/format";
@@ -11,6 +12,15 @@ export interface LinkedRef {
   kind: string;
   /** Human name, e.g. "UBL Current · Rs 4,000". */
   label: string;
+  /**
+   * Where to go and look at it, when it is a row on another screen.
+   *
+   * Naming a record you are about to destroy without offering to show it asks
+   * the user to take the dialog's word for it. Use `ledgerRef()` to build these
+   * — it knows that a one-legged transfer only ever appears on Transactions,
+   * and that both screens need the month as well as the id.
+   */
+  href?: string;
 }
 
 export interface BalanceImpact {
@@ -141,6 +151,16 @@ export function ConfirmDeleteModal({
                   <span className="text-foreground-2 truncate text-[12px]">
                     {ref.label}
                   </span>
+                  {ref.href && (
+                    <Link
+                      href={ref.href}
+                      target="_blank"
+                      className="text-brass-strong ms-auto inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium hover:underline"
+                    >
+                      View
+                      <ArrowUpRight size={11} />
+                    </Link>
+                  )}
                 </li>
               ))}
             </ul>

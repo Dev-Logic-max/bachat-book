@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { Pencil, Power, PowerOff, Trash2, Link2, Link2Off } from "lucide-react";
+import { Pencil, Power, PowerOff, Trash2, Link2, Link2Off, Waypoints } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +20,8 @@ export function RowActions({
   onEdit,
   onDelete,
   onUnlink,
+  onSync,
+  syncLabel = "Add this to your accounts",
   onToggleActive,
   isActive = true,
   editLabel = "Edit",
@@ -40,6 +42,16 @@ export function RowActions({
   onEdit?: () => void;
   onDelete?: () => void;
   onUnlink?: () => void;
+  /**
+   * Write this record into the ledger. Shown ONLY on records that have no entry
+   * in an account yet, so its presence is the message: everything without this
+   * icon is already accounted for.
+   *
+   * It sits FIRST, before the pencil, because it is the additive action — the
+   * two beside it change or destroy what is there.
+   */
+  onSync?: () => void;
+  syncLabel?: string;
   /**
    * Deactivate / reactivate. Distinct from delete on purpose — deactivating is
    * reversible and keeps every record, so it must not sit behind the same red
@@ -67,6 +79,17 @@ export function RowActions({
         className,
       )}
     >
+      {onSync && (
+        <button
+          type="button"
+          onClick={onSync}
+          title={syncLabel}
+          aria-label={syncLabel}
+          className={cn(base, "text-brass-strong hover:bg-brass-soft")}
+        >
+          <Waypoints size={15} strokeWidth={1.75} />
+        </button>
+      )}
       {onUnlink && (
         <button
           type="button"

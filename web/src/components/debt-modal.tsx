@@ -1,7 +1,7 @@
 "use client";
 
 import * as React from "react";
-import { HandCoins } from "lucide-react";
+import { HandCoins, Info } from "lucide-react";
 
 import { accountSelectOptions, type AccountWithInstitution } from "@/components/account-options";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import { DEBT_KINDS, type Debt } from "@/lib/debts";
 import { createDebt, updateDebt } from "@/lib/debt-actions";
 import { formatPKR } from "@/lib/format";
 import { todayISO } from "@/lib/ledger";
+import { checkFunds } from "@/lib/module-ledger";
 import { createClient } from "@/lib/supabase/client";
 import type { DebtDirection, DebtKind } from "@/lib/supabase/types";
 
@@ -24,17 +25,20 @@ const NO_CONTACT = "__none__";
 const NO_ACCOUNT = "__none__";
 
 /**
- * Record money lent or borrowed.
+ * Record money lent or borrowed, and correct it afterwards.
  *
  * The DIRECTION is the first question and the loudest control, because it is
  * the only one that cannot be inferred and the only one that changes what every
  * other field means: which way the account moves, and whether a lock on that
- * account should block it.
+ * account should block it. It is fixed once saved — flipping a loan into a
+ * borrowing would reverse a real ledger row and turn money you are owed into
+ * money you owe, which is a new debt, not an edit.
  *
- * `principal_paisa` is NOT editable once saved. Changing it would leave the
- * opening transfer disagreeing with the debt it opened, and the account balance
- * still holding the old figure. Correcting an amount means deleting and
- * re-recording, which is honest that the ledger has to move too.
+ * EVERYTHING ELSE IS EDITABLE, including the amount and the account. Those two
+ * used to be add-only, so correcting a typo meant deleting the debt and losing
+ * every repayment recorded against it, and a loan logged without an account
+ * could never be attached to one. `updateDebt` moves the opening transfer with
+ * the record, so the pair can never hold two different values for one fact.
  */
 export function DebtModal({
   isOpen,
@@ -44,6 +48,8 @@ export function DebtModal({
   contacts,
   accounts,
   debt,
+  /** Which account the existing opening leg sits on, when there is one. */
+  openingAccountId = null,
   initialDirection = "owed_to_us",
 }: {
   isOpen: boolean;
@@ -54,6 +60,7 @@ export function DebtModal({
   accounts: AccountWithInstitution[];
   /** Null for a new debt. */
   debt: Debt | null;
+  openingAccountId?: string | null;
   initialDirection?: DebtDirection;
 }) {
   const supabase = createClient();
@@ -74,7 +81,7 @@ export function DebtModal({
   // Re-seed per opening. The component stays mounted between openings, so a
   // state initialiser cannot do this and React Compiler rejects setState in an
   // effect.
-  const seedKey = `${isOpen}:${debt?.id ?? "new"}:${initialDirection}`;
+  const seedKey = `${isOpen}:${debt?.id ?? "new"}:${initialDirection}:${openingAccountId ?? ""}`;
   const [seeded, setSeeded] = React.useState(seedKey);
   if (seeded !== seedKey) {
     setSeeded(seedKey);
@@ -84,9 +91,11 @@ export function DebtModal({
       setTypedName(debt && !debt.contact_id ? debt.counterparty_name : "");
       setKind(debt?.kind ?? "qarz");
       setAmount(debt ? String(Number(debt.principal_paisa) / 100) : "");
-      setDate(todayISO());
+      // `opened_on`, not `created_at` — the day the money changed hands, which
+      // is not the day somebody got round to typing it in.
+      setDate(debt?.opened_on ?? todayISO());
       setDueDate(debt?.due_date ?? "");
-      setAccountId(NO_ACCOUNT);
+      setAccountId(openingAccountId ?? NO_ACCOUNT);
       setNote(debt?.note ?? "");
     }
   }
@@ -94,10 +103,30 @@ export function DebtModal({
   const paisa = Math.round((parseFloat(amount) || 0) * 100);
   const chosenContact = contacts.find((c) => c.id === contactId) ?? null;
   const resolvedName = chosenContact?.name ?? typedName.trim();
+  const resolvedAccountId = accountId === NO_ACCOUNT ? null : accountId;
 
   // A lock only bites on the way OUT. Lending money leaves the account, so it
   // is checked as an expense; borrowing arrives, so it is checked as income.
   const moneyDirection = direction === "owed_to_us" ? "expense" : "income";
+
+  /*
+   * Can the account afford it?
+   *
+   * Only lending can fail. On an EDIT the account is already carrying the old
+   * leg, so what is being asked for is the DIFFERENCE — raising a Rs 5,000 loan
+   * to Rs 6,000 needs Rs 1,000 more, not a fresh Rs 6,000, and treating it as
+   * the latter would refuse edits the account can plainly afford.
+   *
+   * The database enforces this too, in `assert_account_has_funds`. This is the
+   * sentence; that is the protection.
+   */
+  const selectedAccount = accounts.find((a) => a.id === resolvedAccountId);
+  const alreadyOnThisAccount = isEdit && openingAccountId === resolvedAccountId;
+  const funds = checkFunds(
+    selectedAccount,
+    direction === "owed_to_us" ? -paisa : paisa,
+    alreadyOnThisAccount ? -Number(debt?.principal_paisa ?? 0) : 0,
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -110,7 +139,7 @@ export function DebtModal({
       });
       return;
     }
-    if (!isEdit && paisa <= 0) {
+    if (paisa <= 0) {
       showToast({
         type: "error",
         title: "How much?",
@@ -118,18 +147,31 @@ export function DebtModal({
       });
       return;
     }
+    if (funds.message) {
+      showToast({ type: "error", title: "Not enough in that account", description: funds.message });
+      return;
+    }
 
     setSubmitting(true);
     try {
       if (debt) {
-        await updateDebt(supabase, debt.id, {
+        await updateDebt(supabase, debt, {
           counterpartyName: resolvedName,
           contactId: contactId === NO_CONTACT ? null : contactId,
           kind,
+          principalPaisa: paisa,
+          openedOn: date,
           dueDate: dueDate || null,
           note: note.trim() || null,
+          accountId: resolvedAccountId,
         });
-        showToast({ type: "success", title: "Saved", description: `${resolvedName} updated.` });
+        showToast({
+          type: "success",
+          title: "Saved",
+          description: resolvedAccountId
+            ? "The account entry was moved to match."
+            : "Tracked only — no account balance is involved.",
+        });
       } else {
         await createDebt(supabase, {
           householdId,
@@ -141,15 +183,14 @@ export function DebtModal({
           date,
           dueDate: dueDate || null,
           note: note.trim() || null,
-          accountId: accountId === NO_ACCOUNT ? null : accountId,
+          accountId: resolvedAccountId,
         });
         showToast({
           type: "success",
           title: direction === "owed_to_us" ? "Loan recorded" : "Borrowing recorded",
-          description:
-            accountId === NO_ACCOUNT
-              ? "Tracked only — no account balance was touched."
-              : `${formatPKR(paisa)} — your balance moved, your spending did not.`,
+          description: resolvedAccountId
+            ? `${formatPKR(paisa)} — your balance moved, your spending did not.`
+            : "Tracked only — no account balance was touched.",
         });
       }
       onSaved();
@@ -172,7 +213,7 @@ export function DebtModal({
       title={isEdit ? "Edit debt" : direction === "owed_to_us" ? "Lend money" : "Record borrowing"}
       subtitle={
         isEdit
-          ? "The amount cannot change here — delete and re-record to correct it."
+          ? "Changing the amount or the account moves the entry in your accounts with it."
           : "Your balance moves. Your spending figures do not."
       }
       icon={<HandCoins size={18} />}
@@ -189,7 +230,10 @@ export function DebtModal({
       }
     >
       <div className="space-y-4">
-        {/* ---- Direction: the question everything else depends on ---------- */}
+        {/* ---- Direction: the question everything else depends on ----------
+            Fixed after saving. Flipping it would reverse a real ledger row and
+            turn money you are owed into money you owe — a different debt, not
+            an edit to this one. */}
         {!isEdit && (
           <div>
             <span className="text-foreground-2 mb-1.5 block text-xs font-medium">
@@ -251,23 +295,26 @@ export function DebtModal({
         )}
 
         {/* ---- How much and when -------------------------------------------- */}
-        {!isEdit && (
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Input
-              label="Amount (PKR)"
-              type="number"
-              step="any"
-              min="0"
-              inputMode="decimal"
-              placeholder="e.g. 5000"
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              className="tnum"
-              required
-            />
-            <DatePicker label="Date" value={date} onChange={setDate} max={todayISO()} />
-          </div>
-        )}
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <Input
+            label="Amount (PKR)"
+            type="number"
+            step="any"
+            min="0"
+            inputMode="decimal"
+            placeholder="e.g. 5000"
+            value={amount}
+            onChange={(e) => setAmount(e.target.value)}
+            className="tnum"
+            required
+          />
+          <DatePicker
+            label={direction === "owed_to_us" ? "Lent on" : "Borrowed on"}
+            value={date}
+            onChange={setDate}
+            max={todayISO()}
+          />
+        </div>
 
         <RichSelect
           label="What kind of arrangement?"
@@ -282,25 +329,40 @@ export function DebtModal({
         />
 
         {/* ---- Which account ------------------------------------------------ */}
-        {!isEdit && (
-          <RichSelect
-            label={
-              direction === "owed_to_us"
-                ? "Which account did the money come from?"
-                : "Which account did the money arrive in?"
-            }
-            value={accountId}
-            onChange={setAccountId}
-            searchable={accounts.length >= 8}
-            options={[
-              {
-                value: NO_ACCOUNT,
-                label: "No account — just track it",
-                description: "Money that changed hands before you started using the app",
-              },
-              ...accountSelectOptions(accounts, { direction: moneyDirection }),
-            ]}
-          />
+        <RichSelect
+          label={
+            direction === "owed_to_us"
+              ? "Which account did the money come from?"
+              : "Which account did the money arrive in?"
+          }
+          value={accountId}
+          onChange={setAccountId}
+          searchable={accounts.length >= 8}
+          options={[
+            {
+              value: NO_ACCOUNT,
+              label: "No account — just track it",
+              description: "Money that changed hands before you started using the app",
+            },
+            ...accountSelectOptions(accounts, { direction: moneyDirection }),
+          ]}
+          hint={
+            isEdit
+              ? openingAccountId
+                ? "Changing this moves the existing entry to the other account. Clearing it removes the entry and puts the balance back."
+                : "This debt has no entry in your accounts. Naming one now writes it, dated the day above."
+              : undefined
+          }
+        />
+
+        {/* The one thing the dropdown cannot say: that the account is short.
+            Shown live rather than on submit, because the fix is to pick a
+            different account and that choice is right here. */}
+        {funds.message && (
+          <p className="border-loss/25 bg-loss/8 text-loss rounded-control flex items-start gap-2 border px-3 py-2.5 text-[11.5px] leading-relaxed">
+            <Info size={14} className="mt-px shrink-0" />
+            <span>{funds.message}</span>
+          </p>
         )}
 
         <DatePicker

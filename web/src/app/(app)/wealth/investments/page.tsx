@@ -28,10 +28,11 @@ import { FilterBar } from "@/components/filter-bar";
 import { InvestmentModal } from "@/components/investment-modal";
 import {
   CloseInvestmentModal,
-  LinkHoldingModal,
   PayoutModal,
   ValuationModal,
 } from "@/components/investment-modals";
+import { LedgerRefChip } from "@/components/ledger-ref-chip";
+import { LinkToAccountModal } from "@/components/link-to-account-modal";
 import { MerchantMark } from "@/components/merchant-mark";
 import { PageActions } from "@/components/page-actions";
 import { Reveal } from "@/components/reveal";
@@ -67,12 +68,26 @@ import {
   deletePayout,
   loadIntegrations,
   reopenInvestment,
+  syncHoldingToLedger,
+  updatePayout,
 } from "@/lib/investment-actions";
+import { ledgerRefFor } from "@/lib/module-ledger";
 import { createClient } from "@/lib/supabase/client";
 import type { Tables } from "@/lib/supabase/types";
 
 type Holding = Tables<"investments">;
 type Payout = Tables<"investment_payouts">;
+
+/**
+ * The ledger rows this page's records point at.
+ *
+ * A holding stores `funding_transaction_id` and `exit_transaction_id`; a payout
+ * stores `transaction_id`. None of them carries the row's own DATE, which the
+ * deep link into Entries or Transactions needs to name the month — both screens
+ * open on the current month, so an id alone lands on a page that cannot contain
+ * the row.
+ */
+type LedgerRow = { id: string; date: string; type: string; account_id: string };
 
 /** Lucide name → component. Keeps `lib/investments.ts` free of JSX. */
 const KIND_ICON: Record<string, React.ComponentType<{ size?: number; className?: string; strokeWidth?: number }>> = {
@@ -142,8 +157,17 @@ export default function InvestmentsPage() {
   const [valuing, setValuing] = React.useState<Holding | null>(null);
   const [payingOut, setPayingOut] = React.useState<Holding | null>(null);
   const [closing, setClosing] = React.useState<Holding | null>(null);
-  const [linking, setLinking] = React.useState<Holding | null>(null);
+  /** Which record is being given the ledger entry it never got. */
+  const [linking, setLinking] = React.useState<
+    { holding: Holding; payout: Payout | null } | null
+  >(null);
   const [deleting, setDeleting] = React.useState<Holding | null>(null);
+  const [ledgerRows, setLedgerRows] = React.useState<Record<string, LedgerRow>>({});
+  /** EDITING one profit payment, as opposed to adding another to the holding. */
+  const [editingPayout, setEditingPayout] = React.useState<{
+    payout: Payout;
+    holding: Holding;
+  } | null>(null);
   const [deletingPayout, setDeletingPayout] = React.useState<{
     payout: Payout;
     holding: Holding;
@@ -224,6 +248,36 @@ export default function InvestmentsPage() {
       }
 
       setLoading(false);
+
+      /*
+       * The ledger rows behind these records, fetched second because their ids
+       * only exist once the holdings and payouts are back. Household-scoped as
+       * well as id-scoped: RLS already does that, and saying it here means a
+       * mismatched id can never read across a tenant boundary.
+       */
+      const ids = [
+        ...(holdingRes.data ?? []).flatMap((h) => [
+          h.funding_transaction_id,
+          h.exit_transaction_id,
+        ]),
+        ...(payoutRes.data ?? []).map((p) => p.transaction_id),
+      ].filter((id): id is string => Boolean(id));
+
+      if (ids.length === 0) {
+        setLedgerRows({});
+        return;
+      }
+
+      const { data: rows } = await supabase
+        .from("transactions")
+        .select("id, date, type, account_id")
+        .eq("household_id", householdId)
+        .in("id", ids);
+
+      if (!active) return;
+      setLedgerRows(
+        Object.fromEntries(((rows ?? []) as LedgerRow[]).map((r) => [r.id, r])),
+      );
     }
 
     load();
@@ -377,6 +431,39 @@ export default function InvestmentsPage() {
   };
 
   /**
+   * Give a record the ledger entry it never got.
+   *
+   * Both branches go through the SAME functions the ordinary forms use, so a
+   * record that grew an entry afterwards is indistinguishable from one that had
+   * it from the start. There is one way for a holding to hold a funding leg, not
+   * two, and that is what stops the two paths drifting apart.
+   */
+  const handleLinkToAccount = async (accountId: string) => {
+    if (!linking) return;
+    const { holding, payout } = linking;
+
+    if (payout) {
+      await updatePayout(supabase, holding, payout, {
+        date: payout.date,
+        amountPaisa: Number(payout.amount_paisa),
+        accountId,
+        reinvest: false,
+        note: payout.note,
+      });
+    } else {
+      await syncHoldingToLedger(supabase, holding, accountId);
+    }
+
+    showToast({
+      type: "success",
+      title: "Added to your accounts",
+      description: `${accounts.find((a) => a.id === accountId)?.name ?? "That account"} now carries this entry.`,
+    });
+    setLinking(null);
+    refresh();
+  };
+
+  /**
    * Remove one profit payment from the roll-up.
    *
    * `deletePayout` does the two-sided unwind: it deletes the income entry the
@@ -418,28 +505,47 @@ export default function InvestmentsPage() {
    */
   const deletingLinks = React.useMemo(() => {
     if (!deleting) return [];
-    const links: { kind: string; label: string }[] = [];
+    const links: { kind: string; label: string; href?: string }[] = [];
     if (deleting.funding_transaction_id) {
+      const row = ledgerRows[deleting.funding_transaction_id];
       links.push({
         kind: "Account entry",
         label: `Invested in ${deleting.name} · ${formatPKR(Number(deleting.principal_paisa))}`,
+        // Named AND reachable. Listing what is about to be destroyed without a
+        // way to look at it asks for trust rather than judgement.
+        href: ledgerRefFor(
+          deleting.funding_transaction_id,
+          row?.date ?? deleting.purchase_date,
+          "transfer",
+        ).href,
       });
     }
     if (deleting.exit_transaction_id) {
+      const row = ledgerRows[deleting.exit_transaction_id];
       links.push({
         kind: "Account entry",
         label: `Withdrew from ${deleting.name} · ${formatPKR(Number(deleting.exit_value_paisa ?? 0))}`,
+        href: ledgerRefFor(
+          deleting.exit_transaction_id,
+          row?.date ?? deleting.exit_date ?? deleting.purchase_date,
+          "transfer",
+        ).href,
       });
     }
-    const paid = (payoutsByHolding[deleting.id] ?? []).filter((p) => p.transaction_id);
-    if (paid.length > 0) {
+    for (const payout of (payoutsByHolding[deleting.id] ?? []).filter((p) => p.transaction_id)) {
+      const row = ledgerRows[payout.transaction_id as string];
       links.push({
-        kind: paid.length === 1 ? "Income entry" : `${paid.length} income entries`,
-        label: `Profit from ${deleting.name}`,
+        kind: "Income entry",
+        label: `Profit from ${deleting.name} · ${formatPKR(Number(payout.amount_paisa))}`,
+        href: ledgerRefFor(
+          payout.transaction_id as string,
+          row?.date ?? payout.date,
+          "income",
+        ).href,
       });
     }
     return links;
-  }, [deleting, payoutsByHolding]);
+  }, [deleting, payoutsByHolding, ledgerRows]);
 
   const deletingAccount = deleting?.account_id
     ? accounts.find((a) => a.id === deleting.account_id)
@@ -695,12 +801,22 @@ export default function InvestmentsPage() {
                 institution={institutionById.get(holding.institution_id ?? "") ?? null}
                 readOnly={readOnly}
                 syncEnabled={syncEnabled}
+                fundingRow={
+                  holding.funding_transaction_id
+                    ? (ledgerRows[holding.funding_transaction_id] ?? null)
+                    : null
+                }
+                exitRow={
+                  holding.exit_transaction_id
+                    ? (ledgerRows[holding.exit_transaction_id] ?? null)
+                    : null
+                }
                 onEdit={() => setEditing(holding)}
                 onDelete={() => setDeleting(holding)}
                 onRevalue={() => setValuing(holding)}
                 onPayout={() => setPayingOut(holding)}
                 onClose={() => setClosing(holding)}
-                onLink={() => setLinking(holding)}
+                onLink={() => setLinking({ holding, payout: null })}
                 onReopen={() => void handleReopen(holding)}
               />
             </Reveal>
@@ -798,6 +914,9 @@ export default function InvestmentsPage() {
                 <ul className="divide-border divide-y">
                   {bucket.payouts.map((payout) => {
                     const holding = holdings.find((h) => h.id === payout.investment_id);
+                    const row = payout.transaction_id
+                      ? ledgerRows[payout.transaction_id]
+                      : undefined;
                     return (
                       <li
                         key={payout.id}
@@ -813,6 +932,14 @@ export default function InvestmentsPage() {
                             {payout.destination === "reinvested" ? "reinvested" : "received"}
                             {payout.note && ` · ${payout.note}`}
                           </p>
+                          {row && (
+                            <LedgerRefChip
+                              transactionId={row.id}
+                              date={row.date}
+                              type={row.type as "income" | "expense" | "transfer"}
+                              className="mt-1"
+                            />
+                          )}
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <span
@@ -824,9 +951,32 @@ export default function InvestmentsPage() {
                           </span>
                           {!readOnly && holding && (
                             <RowActions
-                              onEdit={() => setPayingOut(holding)}
+                              /*
+                                Only a RECEIVED payment can be given an account.
+                                Reinvested profit never reached one — the money is
+                                inside the holding's value — so offering to file
+                                it in a bank would invent a movement.
+                              */
+                              onSync={
+                                syncEnabled && !row && payout.destination === "received"
+                                  ? () => setLinking({ holding, payout })
+                                  : undefined
+                              }
+                              syncLabel="Add this payment to your accounts"
+                              /*
+                                THIS ROW, not a blank form for its holding.
+
+                                The pencil used to open "Record profit" against
+                                the parent holding with every field empty. It
+                                looked like an edit and behaved like "add
+                                another", so a profit typed as 115000 instead of
+                                11500 had no correction path at all — and the
+                                figure feeds the lifetime return on the card and
+                                every total in this roll-up.
+                              */
+                              onEdit={() => setEditingPayout({ payout, holding })}
                               onDelete={() => setDeletingPayout({ payout, holding })}
-                              editLabel="Edit this holding's profit"
+                              editLabel="Edit this payment"
                               deleteLabel="Remove this payment"
                               reveal="hover"
                             />
@@ -909,13 +1059,22 @@ export default function InvestmentsPage() {
       </Modal>
 
       <PayoutModal
-        isOpen={payingOut !== null}
-        onClose={() => setPayingOut(null)}
+        isOpen={payingOut !== null || editingPayout !== null}
+        onClose={() => {
+          setPayingOut(null);
+          setEditingPayout(null);
+        }}
         onSaved={refresh}
-        holding={payingOut}
+        holding={payingOut ?? editingPayout?.holding ?? null}
         accounts={accounts}
         syncEnabled={syncEnabled}
         payouts={payingOut ? (payoutsByHolding[payingOut.id] ?? []) : []}
+        payout={editingPayout?.payout ?? null}
+        payoutLedgerRow={
+          editingPayout?.payout.transaction_id
+            ? (ledgerRows[editingPayout.payout.transaction_id] ?? null)
+            : null
+        }
       />
 
       <CloseInvestmentModal
@@ -927,11 +1086,34 @@ export default function InvestmentsPage() {
         syncEnabled={syncEnabled}
       />
 
-      <LinkHoldingModal
+      {/*
+        The gap this closes: a holding, or a profit payment, recorded while the
+        bridge was shut and now needing the account entry it never got. There was
+        a "Link" button for holdings and nothing at all for payments.
+      */}
+      <LinkToAccountModal
         isOpen={linking !== null}
         onClose={() => setLinking(null)}
-        onSaved={refresh}
-        holding={linking}
+        onConfirm={handleLinkToAccount}
+        title="Add this to your accounts"
+        subtitle={linking?.holding.name}
+        recordLabel={
+          linking
+            ? linking.payout
+              ? `Profit from ${linking.holding.name}`
+              : `Invested in ${linking.holding.name}`
+            : ""
+        }
+        amountPaisa={
+          linking
+            ? Number(linking.payout?.amount_paisa ?? linking.holding.principal_paisa)
+            : 0
+        }
+        date={linking ? (linking.payout?.date ?? linking.holding.purchase_date) : ""}
+        /* Buying is money leaving; profit arriving is money coming in — and a
+           locked account may be paid into but never out of, so the direction
+           decides whether the lock bites at all. */
+        direction={linking?.payout ? "income" : "expense"}
         accounts={accounts}
       />
 
@@ -952,7 +1134,18 @@ export default function InvestmentsPage() {
         }
         linkedRefs={
           deletingPayout?.payout.transaction_id
-            ? [{ kind: "Income entry", label: `Profit from ${deletingPayout.holding.name}` }]
+            ? [
+                {
+                  kind: "Income entry",
+                  label: `Profit from ${deletingPayout.holding.name} · ${formatPKR(Number(deletingPayout.payout.amount_paisa))}`,
+                  href: ledgerRefFor(
+                    deletingPayout.payout.transaction_id,
+                    ledgerRows[deletingPayout.payout.transaction_id]?.date ??
+                      deletingPayout.payout.date,
+                    "income",
+                  ).href,
+                },
+              ]
             : []
         }
         cascadeHint={
@@ -1038,6 +1231,8 @@ function HoldingCard({
   institution,
   readOnly,
   syncEnabled,
+  fundingRow,
+  exitRow,
   onEdit,
   onDelete,
   onRevalue,
@@ -1051,6 +1246,10 @@ function HoldingCard({
   institution: Tables<"institutions"> | null;
   readOnly: boolean;
   syncEnabled: boolean;
+  /** The ledger row that paid for this holding, or null if nothing did. */
+  fundingRow: LedgerRow | null;
+  /** The ledger row the money came back through, when it has been cashed in. */
+  exitRow: LedgerRow | null;
   onEdit: () => void;
   onDelete: () => void;
   onRevalue: () => void;
@@ -1113,21 +1312,31 @@ function HoldingCard({
         </div>
 
         {/*
-          `always`, not the usual hover reveal.
+          Hover-revealed, matching every other card in the product.
 
-          This card already shows "Update value", "Profit" and "Cash in" as
-          visible buttons, so hiding edit and delete behind hover made two of
-          the card's five actions undiscoverable while the other three sat in
-          plain sight. Hover-reveal is right for a dense list row; it is not
-          right for a card that is already advertising what it can do.
+          The card carries "Record profit", "Update value" and "Cash in" as
+          visible buttons at the bottom — that row is what advertises what a
+          holding can do. Edit, delete and sync are the row-level verbs and they
+          belong where they are on debts, tasks and categories. `reveal="hover"`
+          still shows them permanently below `lg` and on `:focus-within`, so
+          touch and keyboard lose nothing.
         */}
         {!readOnly && (
           <RowActions
+            /*
+              The sync icon exists ONLY while this holding has no entry in any
+              account, so its presence is the message: every card without it is
+              already accounted for. Silent when the household keeps the bridge
+              shut, because then "not in your accounts" is the intended state and
+              flagging it would nag about a decision already taken.
+            */
+            onSync={syncEnabled && !fundingRow ? onLink : undefined}
+            syncLabel="Add this holding to your accounts"
             onEdit={onEdit}
             onDelete={onDelete}
             editLabel="Edit holding"
             deleteLabel="Remove holding"
-            reveal="always"
+            reveal="hover"
           />
         )}
       </div>
@@ -1199,19 +1408,32 @@ function HoldingCard({
         {projected !== null && (
           <Chip tone="plain">Expects {formatPKRCompact(projected)}/yr</Chip>
         )}
-        {holding.funding_transaction_id ? (
+        {/*
+          Where this money actually sits in the ledger, as links you can follow
+          and check. This used to be a dead chip reading "Linked to an account",
+          which named the fact and then made you go and find the row yourself.
+        */}
+        {fundingRow && (
+          <LedgerRefChip
+            transactionId={fundingRow.id}
+            date={fundingRow.date}
+            type={fundingRow.type as "income" | "expense" | "transfer"}
+            label="Paid from"
+          />
+        )}
+        {exitRow && (
+          <LedgerRefChip
+            transactionId={exitRow.id}
+            date={exitRow.date}
+            type={exitRow.type as "income" | "expense" | "transfer"}
+            label="Came back to"
+          />
+        )}
+        {!fundingRow && syncEnabled && open && (
           <Chip tone="plain">
-            <Link2 size={9} className="me-0.5 inline" />
-            Linked to an account
+            <Wallet size={9} className="me-0.5 inline" />
+            Not in your accounts
           </Chip>
-        ) : (
-          syncEnabled &&
-          open && (
-            <Chip tone="plain">
-              <Wallet size={9} className="me-0.5 inline" />
-              Not linked
-            </Chip>
-          )
         )}
       </div>
 
@@ -1223,9 +1445,10 @@ function HoldingCard({
               <CardAction icon={Banknote} label="Record profit" onClick={onPayout} primary />
               <CardAction icon={Coins} label="Update value" onClick={onRevalue} />
               <CardAction icon={TrendingUp} label="Cash in" onClick={onClose} />
-              {syncEnabled && !holding.funding_transaction_id && (
-                <CardAction icon={Link2} label="Link" onClick={onLink} />
-              )}
+              {/* "Link" used to sit here as a fourth chip. It is the sync icon in
+                  the card header now — the row of buttons is for what a holding
+                  DOES, and filing it in an account is a one-off correction, not
+                  something you come back to every quarter. */}
             </>
           ) : (
             // Closing a holding used to be one-way, so a mis-tap on "Cash in"

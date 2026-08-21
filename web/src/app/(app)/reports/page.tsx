@@ -38,6 +38,7 @@ import { RichSelect } from "@/components/ui/select";
 import { formatPKR, formatPKRCompact } from "@/lib/format";
 import {
   RANGE_PRESETS,
+  cashPositionSeries,
   expenseByCategory,
   monthRange,
   monthlySeries,
@@ -131,6 +132,27 @@ export default function ReportsPage() {
   );
   const series = React.useMemo(() => monthlySeries(movements, range), [movements, range]);
 
+  /*
+   * What was actually held, day by day.
+   *
+   * Walked BACKWARDS from today's balance, so it needs the current figure —
+   * which is `sync_account_balance_trigger`'s running total across live accounts
+   * and the one number that is certainly right. Archived and deleted accounts
+   * are excluded here for the same reason they are excluded from "what you
+   * hold" everywhere else.
+   */
+  const currentCashPaisa = React.useMemo(
+    () =>
+      accounts
+        .filter((a) => !a.is_archived && !a.deleted_at)
+        .reduce((sum, a) => sum + Number(a.balance_paisa), 0),
+    [accounts],
+  );
+  const cash = React.useMemo(
+    () => cashPositionSeries(movements, range, currentCashPaisa),
+    [movements, range, currentCashPaisa],
+  );
+
   const categoryNameById = React.useMemo(
     () => new Map(categories.map((c) => [c.id, c.name])),
     [categories],
@@ -145,6 +167,7 @@ export default function ReportsPage() {
     totals,
     categories: slices,
     monthly: series,
+    cash,
     movements,
     categoryNameById,
     accountNameById,

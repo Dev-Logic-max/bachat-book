@@ -3,6 +3,7 @@
 import * as React from "react";
 import { History, Plus } from "lucide-react";
 
+import { LedgerRefChip } from "@/components/ledger-ref-chip";
 import { Button } from "@/components/ui/button";
 import { Modal } from "@/components/ui/modal";
 import { RowActions } from "@/components/ui/row-actions";
@@ -31,17 +32,23 @@ export function DebtDetailModal({
   onClose,
   debt,
   readOnly,
+  ledgerRows = {},
   onAddPayment,
   onEditPayment,
   onDeletePayment,
+  onLinkPayment,
 }: {
   isOpen: boolean;
   onClose: () => void;
   debt: DebtWithPayments | null;
   readOnly: boolean;
+  /** Ledger rows by id, so each payment can link to the entry it wrote. */
+  ledgerRows?: Record<string, { id: string; date: string; type: string }>;
   onAddPayment: () => void;
   onEditPayment: (payment: DebtPayment) => void;
   onDeletePayment: (payment: DebtPayment) => void;
+  /** Give a payment recorded without an account the entry it never got. */
+  onLinkPayment: (payment: DebtPayment) => void;
 }) {
   if (!debt) return null;
 
@@ -104,7 +111,7 @@ export function DebtDetailModal({
         <dl className="border-border divide-border divide-y rounded-control border text-[11.5px]">
           <Row
             label={isIncoming ? "Lent on" : "Borrowed on"}
-            value={<span className="ltr">{debt.created_at.slice(0, 10)}</span>}
+            value={<span className="ltr">{debt.opened_on}</span>}
           />
           {debt.due_date && (
             <Row label="Due" value={<span className="ltr">{debt.due_date}</span>} />
@@ -132,32 +139,50 @@ export function DebtDetailModal({
             </p>
           ) : (
             <ul className="border-border divide-border divide-y rounded-control border">
-              {debt.payments.map((payment) => (
-                <li
-                  key={payment.id}
-                  className="group hover:bg-surface-subtle focus-within:bg-surface-subtle flex items-center justify-between gap-2 px-3 py-2 transition-colors"
-                >
-                  <div className="min-w-0">
-                    <p className="tnum text-foreground text-[12.5px] font-semibold">
-                      {formatPKR(Number(payment.amount_paisa))}
-                    </p>
-                    <p className="text-faint truncate text-[10.5px]">
-                      <span className="ltr">{payment.date}</span>
-                      {payment.note && ` · ${payment.note}`}
-                      {!payment.transaction_id && " · not linked to an account"}
-                    </p>
-                  </div>
-                  {!readOnly && (
-                    <RowActions
-                      onEdit={() => onEditPayment(payment)}
-                      onDelete={() => onDeletePayment(payment)}
-                      editLabel="Edit this payment"
-                      deleteLabel="Remove this payment"
-                      reveal="hover"
-                    />
-                  )}
-                </li>
-              ))}
+              {debt.payments.map((payment) => {
+                const row = payment.transaction_id
+                  ? ledgerRows[payment.transaction_id]
+                  : undefined;
+                return (
+                  <li
+                    key={payment.id}
+                    className="group hover:bg-surface-subtle focus-within:bg-surface-subtle flex items-center justify-between gap-2 px-3 py-2 transition-colors"
+                  >
+                    <div className="min-w-0">
+                      <p className="tnum text-foreground text-[12.5px] font-semibold">
+                        {formatPKR(Number(payment.amount_paisa))}
+                      </p>
+                      <p className="text-faint truncate text-[10.5px]">
+                        <span className="ltr">{payment.date}</span>
+                        {payment.note && ` · ${payment.note}`}
+                      </p>
+                      {/* The entry this payment wrote, as a link into the ledger.
+                          Its absence is now the only thing that says "no account
+                          was involved" — the old trailing sentence said it in
+                          words and offered nothing to do about it. */}
+                      {row && (
+                        <LedgerRefChip
+                          transactionId={row.id}
+                          date={row.date}
+                          type={row.type as "income" | "expense" | "transfer"}
+                          className="mt-1"
+                        />
+                      )}
+                    </div>
+                    {!readOnly && (
+                      <RowActions
+                        onSync={row ? undefined : () => onLinkPayment(payment)}
+                        syncLabel="Add this payment to your accounts"
+                        onEdit={() => onEditPayment(payment)}
+                        onDelete={() => onDeletePayment(payment)}
+                        editLabel="Edit this payment"
+                        deleteLabel="Remove this payment"
+                        reveal="hover"
+                      />
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>

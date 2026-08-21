@@ -1,9 +1,10 @@
 "use client";
 
 import * as React from "react";
-import { Banknote, UserPlus } from "lucide-react";
+import { Banknote, Info, UserPlus } from "lucide-react";
 
 import { accountSelectOptions, type AccountWithInstitution } from "@/components/account-options";
+import { LedgerRefChip } from "@/components/ledger-ref-chip";
 import { Button } from "@/components/ui/button";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Input } from "@/components/ui/input";
@@ -21,6 +22,7 @@ import {
 } from "@/lib/committee-actions";
 import { formatPKR } from "@/lib/format";
 import { todayISO } from "@/lib/ledger";
+import { checkFunds } from "@/lib/module-ledger";
 import { createClient } from "@/lib/supabase/client";
 
 const NO_CONTACT = "__none__";
@@ -226,6 +228,7 @@ export function CommitteePaymentModal({
   payment,
   kind,
   accounts,
+  ledgerRow = null,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -237,6 +240,8 @@ export function CommitteePaymentModal({
   payment: CommitteePayment | null;
   kind: "contribution" | "payout";
   accounts: AccountWithInstitution[];
+  /** The ledger row this cell wrote, when it wrote one. */
+  ledgerRow?: { id: string; date: string; type: string; account_id: string } | null;
 }) {
   const supabase = createClient();
   const { showToast } = useToast();
@@ -248,7 +253,7 @@ export function CommitteePaymentModal({
   const [note, setNote] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
-  const seedKey = `${isOpen}:${payment?.id ?? `${member?.id}:${monthIndex}:${kind}`}`;
+  const seedKey = `${isOpen}:${payment?.id ?? `${member?.id}:${monthIndex}:${kind}`}:${ledgerRow?.account_id ?? ""}`;
   const [seeded, setSeeded] = React.useState(seedKey);
   if (seeded !== seedKey) {
     setSeeded(seedKey);
@@ -263,16 +268,30 @@ export function CommitteePaymentModal({
             : String(Number(committee.monthly_contribution_paisa) / 100),
       );
       setPaidOn(payment?.paid_on ?? todayISO());
-      setAccountId(NO_ACCOUNT);
+      setAccountId(payment ? (ledgerRow?.account_id ?? NO_ACCOUNT) : NO_ACCOUNT);
       setNote(payment?.note ?? "");
     }
   }
 
-  if (!committee || !member) return null;
-
   const paisa = Math.round((parseFloat(amount) || 0) * 100);
   const isPayout = (payment?.kind ?? kind) === "payout";
-  const touchesLedger = member.is_me;
+  const touchesLedger = Boolean(member?.is_me);
+  const resolvedAccountId = accountId === NO_ACCOUNT ? null : accountId;
+
+  /*
+   * My instalment leaves my account, so it can run it short; my payout arrives,
+   * so it never can. On an edit the account already carries the old row, which
+   * is what `replacing` accounts for.
+   */
+  const selectedAccount = accounts.find((a) => a.id === resolvedAccountId);
+  const alreadyOnThisAccount = Boolean(payment) && ledgerRow?.account_id === resolvedAccountId;
+  const funds = checkFunds(
+    touchesLedger ? selectedAccount : undefined,
+    isPayout ? paisa : -paisa,
+    alreadyOnThisAccount ? (isPayout ? 1 : -1) * Number(payment?.amount_paisa ?? 0) : 0,
+  );
+
+  if (!committee || !member) return null;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -280,14 +299,19 @@ export function CommitteePaymentModal({
       showToast({ type: "error", title: "How much?", description: "An amount above zero is needed." });
       return;
     }
+    if (funds.message) {
+      showToast({ type: "error", title: "Not enough in that account", description: funds.message });
+      return;
+    }
 
     setSubmitting(true);
     try {
       if (payment) {
-        await updateCommitteePayment(supabase, committee, payment, {
+        await updateCommitteePayment(supabase, committee, member, payment, {
           amountPaisa: paisa,
           paidOn,
           note: note.trim() || null,
+          accountId: resolvedAccountId,
         });
       } else {
         await recordCommitteePayment(supabase, {
@@ -372,24 +396,50 @@ export function CommitteePaymentModal({
           The account is asked for ONLY on my own row. Another member's
           instalment never passes through my accounts, so offering a picker
           would invite recording money I never held.
+
+          It is offered on EDIT as well as on create. It used to be add-only, so
+          a cell recorded without an account could never be given one — the only
+          route was to delete the cell and tick it again.
         */}
-        {touchesLedger && !isEdit && (
-          <RichSelect
-            label={isPayout ? "Which account did it arrive in?" : "Which account did it come from?"}
-            value={accountId}
-            onChange={setAccountId}
-            searchable={accounts.length >= 8}
-            options={[
-              {
-                value: NO_ACCOUNT,
-                label: "No account — just track it",
-                description: "Records it on the grid without moving a balance",
-              },
-              ...accountSelectOptions(accounts, {
-                direction: isPayout ? "income" : "expense",
-              }),
-            ]}
-          />
+        {touchesLedger && (
+          <>
+            <RichSelect
+              label={isPayout ? "Which account did it arrive in?" : "Which account did it come from?"}
+              value={accountId}
+              onChange={setAccountId}
+              searchable={accounts.length >= 8}
+              options={[
+                {
+                  value: NO_ACCOUNT,
+                  label: "No account — just track it",
+                  description: "Records it on the grid without moving a balance",
+                },
+                ...accountSelectOptions(accounts, {
+                  direction: isPayout ? "income" : "expense",
+                }),
+              ]}
+              hint={
+                isEdit
+                  ? ledgerRow
+                    ? "Changing this moves the entry to the other account. Clearing it removes the entry and puts the balance back."
+                    : "This cell has no entry in your accounts. Naming one now writes it, dated as above."
+                  : undefined
+              }
+            />
+            {ledgerRow && (
+              <LedgerRefChip
+                transactionId={ledgerRow.id}
+                date={ledgerRow.date}
+                type={ledgerRow.type as "income" | "expense" | "transfer"}
+              />
+            )}
+            {funds.message && (
+              <p className="border-loss/25 bg-loss/8 text-loss rounded-control flex items-start gap-2 border px-3 py-2.5 text-[11.5px] leading-relaxed">
+                <Info size={14} className="mt-px shrink-0" />
+                <span>{funds.message}</span>
+              </p>
+            )}
+          </>
         )}
 
         {!touchesLedger && (
@@ -397,14 +447,6 @@ export function CommitteePaymentModal({
             This is {member.member_name}&apos;s instalment, so nothing is written to
             your accounts — their money never passes through them. It is recorded
             on the grid so you can see who has paid.
-          </p>
-        )}
-
-        {touchesLedger && isEdit && (
-          <p className="border-border bg-surface-subtle text-foreground-2 rounded-control border px-3 py-2 text-[11.5px] leading-snug">
-            {payment?.transaction_id
-              ? "The account entry this wrote will be updated to match. To move it to a different account, delete it and record it again."
-              : "This is not linked to an account, so nothing else changes."}
           </p>
         )}
 

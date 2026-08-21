@@ -114,7 +114,21 @@ function TransactionsPageInner() {
    * screens described different spans of time while claiming to describe the
    * same money.
    */
-  const [month, setMonth] = React.useState(() => todayISO().slice(0, 7));
+  const [month, setMonth] = React.useState(
+    () => searchParams.get("month") ?? todayISO().slice(0, 7),
+  );
+  /*
+   * `?month=` and `?tx=` let another screen link at ONE row, matching what
+   * Entries already accepts.
+   *
+   * Every satellite module — a loan, a holding's funding leg, a committee
+   * instalment — writes exactly one row here, and a one-legged TRANSFER shows on
+   * this screen and nowhere else. Without a target to link to, the chips on
+   * those cards could only name the fact and leave you to go hunting. The month
+   * is not optional: this list opens on the current month, so an id alone lands
+   * on a page that does not contain the row.
+   */
+  const highlightId = searchParams.get("tx");
   const [selectedAccountId, setSelectedAccountId] = React.useState("all");
   const [selectedType, setSelectedType] = React.useState<"all" | "income" | "expense" | "transfer">("all");
   const [selectedCategoryId, setSelectedCategoryId] = React.useState("all");
@@ -559,6 +573,12 @@ function TransactionsPageInner() {
                     className={cn(
                       TX_COLS,
                       "hover:bg-surface-subtle/70 grid w-full px-4 py-2.5 text-left transition-colors",
+                      // The row someone was sent here to look at. A ring rather
+                      // than a scroll-and-flash, exactly as Entries does it: the
+                      // list is filtered to one month, so the row is usually on
+                      // screen already, and a permanent marker is still there
+                      // after an animation anyone missed.
+                      highlightId === tx.id && "ring-brass/60 bg-brass-soft/40 ring-2 ring-inset",
                     )}
                   >
                     {tx.merchants?.logo_path ? (

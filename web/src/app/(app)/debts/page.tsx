@@ -25,6 +25,8 @@ import { DebtDetailModal } from "@/components/debt-detail-modal";
 import { DebtModal } from "@/components/debt-modal";
 import { DebtPaymentModal } from "@/components/debt-payment-modal";
 import { EmptyState } from "@/components/empty-state";
+import { LedgerRefChip } from "@/components/ledger-ref-chip";
+import { LinkToAccountModal } from "@/components/link-to-account-modal";
 import { PageActions } from "@/components/page-actions";
 import { Reveal } from "@/components/reveal";
 import { useSession } from "@/components/session-provider";
@@ -52,11 +54,28 @@ import {
   type DebtPayment,
   type DebtWithPayments,
 } from "@/lib/debts";
-import { deleteDebt, deletePayment, setDebtStatus } from "@/lib/debt-actions";
+import {
+  deleteDebt,
+  deletePayment,
+  setDebtStatus,
+  updateDebt,
+  updateDebtPayment,
+} from "@/lib/debt-actions";
 import { formatPKR } from "@/lib/format";
+import { ledgerRefFor } from "@/lib/module-ledger";
 import { createClient } from "@/lib/supabase/client";
 import { dueLabel } from "@/lib/tasks";
 import type { DebtDirection } from "@/lib/supabase/types";
+
+/**
+ * The ledger rows this page's records point at.
+ *
+ * A debt stores `opening_transaction_id` and a payment stores `transaction_id`,
+ * but neither carries the row's own DATE or ACCOUNT — and both are needed:
+ * the date because a deep link into Entries or Transactions must name the month,
+ * and the account because the edit forms now offer to move it.
+ */
+type LedgerRow = { id: string; date: string; type: string; account_id: string };
 
 /** Lucide name → component, so `lib/debts.ts` stays JSX-free. */
 const KIND_ICON: Record<string, React.ComponentType<{ size?: number; strokeWidth?: number; className?: string }>> = {
@@ -98,6 +117,11 @@ export default function DebtsPage() {
   const [deleting, setDeleting] = React.useState<DebtWithPayments | null>(null);
   const [writingOff, setWritingOff] = React.useState<DebtWithPayments | null>(null);
   const [viewing, setViewing] = React.useState<DebtWithPayments | null>(null);
+  const [ledgerRows, setLedgerRows] = React.useState<Record<string, LedgerRow>>({});
+  /** Which record is being given a ledger entry it never got. */
+  const [linking, setLinking] = React.useState<
+    { debt: DebtWithPayments; payment: DebtPayment | null } | null
+  >(null);
 
   React.useEffect(() => {
     let active = true;
@@ -137,6 +161,33 @@ export default function DebtsPage() {
       setAccounts((accountRes.data ?? []) as unknown as AccountWithInstitution[]);
       setLoadError(null);
       setLoading(false);
+
+      /*
+       * The ledger rows behind these records, fetched second because their ids
+       * only exist once the debts and payments are back. Scoped by household as
+       * well as by id — RLS already does that, and saying it here means a
+       * mismatched id can never read across a tenant boundary.
+       */
+      const ids = [
+        ...(debtRes.data ?? []).map((d) => d.opening_transaction_id),
+        ...(paymentRes.data ?? []).map((p) => p.transaction_id),
+      ].filter((id): id is string => Boolean(id));
+
+      if (ids.length === 0) {
+        setLedgerRows({});
+        return;
+      }
+
+      const { data: rows } = await supabase
+        .from("transactions")
+        .select("id, date, type, account_id")
+        .eq("household_id", householdId)
+        .in("id", ids);
+
+      if (!active) return;
+      setLedgerRows(
+        Object.fromEntries(((rows ?? []) as LedgerRow[]).map((r) => [r.id, r])),
+      );
     }
 
     load();
@@ -257,6 +308,47 @@ export default function DebtsPage() {
         description: error instanceof Error ? error.message : "Something went wrong.",
       });
     }
+  };
+
+  /**
+   * Give a record the ledger entry it never got.
+   *
+   * Routed through the SAME update functions the edit forms use, rather than a
+   * shortcut that only knows how to insert. That is what keeps a record with a
+   * leg and a record that just grew one indistinguishable afterwards — there is
+   * one way for a debt to hold an opening transfer, not two.
+   */
+  const handleLinkToAccount = async (accountId: string) => {
+    if (!linking) return;
+    const { debt, payment } = linking;
+
+    if (payment) {
+      await updateDebtPayment(supabase, debt, payment, {
+        amountPaisa: Number(payment.amount_paisa),
+        date: payment.date,
+        note: payment.note,
+        accountId,
+      });
+    } else {
+      await updateDebt(supabase, debt, {
+        counterpartyName: debt.counterparty_name,
+        contactId: debt.contact_id,
+        kind: debt.kind,
+        principalPaisa: Number(debt.principal_paisa),
+        openedOn: debt.opened_on,
+        dueDate: debt.due_date,
+        note: debt.note,
+        accountId,
+      });
+    }
+
+    showToast({
+      type: "success",
+      title: "Added to your accounts",
+      description: `${accounts.find((a) => a.id === accountId)?.name ?? "That account"} now carries this entry.`,
+    });
+    setLinking(null);
+    refresh();
   };
 
   const nothingRecorded = !loading && debts.length === 0;
@@ -401,36 +493,24 @@ export default function DebtsPage() {
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <DebtColumn
-            direction="owed_to_us"
-            debts={owedToUs}
-            readOnly={readOnly}
-            onAdd={() => setAdding("owed_to_us")}
-            onPay={setPaying}
-            onEdit={setEditing}
-            onDelete={setDeleting}
-            onSettle={handleSettle}
-            onReopen={handleReopen}
-            onWriteOff={setWritingOff}
-            onOpenHistory={setViewing}
-            onEditPayment={(debt, payment) => setEditingPayment({ debt, payment })}
-            onDeletePayment={(debt, payment) => setDeletingPayment({ debt, payment })}
-          />
-          <DebtColumn
-            direction="owed_by_us"
-            debts={owedByUs}
-            readOnly={readOnly}
-            onAdd={() => setAdding("owed_by_us")}
-            onPay={setPaying}
-            onEdit={setEditing}
-            onDelete={setDeleting}
-            onSettle={handleSettle}
-            onReopen={handleReopen}
-            onWriteOff={setWritingOff}
-            onOpenHistory={setViewing}
-            onEditPayment={(debt, payment) => setEditingPayment({ debt, payment })}
-            onDeletePayment={(debt, payment) => setDeletingPayment({ debt, payment })}
-          />
+          {(["owed_to_us", "owed_by_us"] as const).map((direction) => (
+            <DebtColumn
+              key={direction}
+              direction={direction}
+              debts={direction === "owed_to_us" ? owedToUs : owedByUs}
+              readOnly={readOnly}
+              ledgerRows={ledgerRows}
+              onAdd={() => setAdding(direction)}
+              onPay={setPaying}
+              onEdit={setEditing}
+              onDelete={setDeleting}
+              onSettle={handleSettle}
+              onReopen={handleReopen}
+              onWriteOff={setWritingOff}
+              onOpenHistory={setViewing}
+              onLink={(debt) => setLinking({ debt, payment: null })}
+            />
+          ))}
         </div>
       )}
 
@@ -445,6 +525,11 @@ export default function DebtsPage() {
         contacts={contacts}
         accounts={accounts}
         debt={editing}
+        openingAccountId={
+          editing?.opening_transaction_id
+            ? (ledgerRows[editing.opening_transaction_id]?.account_id ?? null)
+            : null
+        }
         initialDirection={adding ?? "owed_to_us"}
       />
 
@@ -453,6 +538,7 @@ export default function DebtsPage() {
         onClose={() => setViewing(null)}
         debt={viewing}
         readOnly={readOnly}
+        ledgerRows={ledgerRows}
         onAddPayment={() => {
           setPaying(viewing);
           setViewing(null);
@@ -463,6 +549,10 @@ export default function DebtsPage() {
         }}
         onDeletePayment={(payment) => {
           if (viewing) setDeletingPayment({ debt: viewing, payment });
+          setViewing(null);
+        }}
+        onLinkPayment={(payment) => {
+          if (viewing) setLinking({ debt: viewing, payment });
           setViewing(null);
         }}
       />
@@ -476,6 +566,58 @@ export default function DebtsPage() {
         onSaved={refresh}
         debt={paying ?? editingPayment?.debt ?? null}
         payment={editingPayment?.payment ?? null}
+        paymentAccountId={
+          editingPayment?.payment.transaction_id
+            ? (ledgerRows[editingPayment.payment.transaction_id]?.account_id ?? null)
+            : null
+        }
+        accounts={accounts}
+      />
+
+      {/*
+        The gap this closes: a debt or a repayment recorded with "no account —
+        just track it", which afterwards had no route to an account at all. The
+        only fix was to delete it and type it in again, and for a debt that also
+        threw away every repayment recorded against it.
+      */}
+      <LinkToAccountModal
+        isOpen={linking !== null}
+        onClose={() => setLinking(null)}
+        onConfirm={handleLinkToAccount}
+        title="Add this to your accounts"
+        subtitle={linking?.debt.counterparty_name}
+        recordLabel={
+          linking
+            ? linking.payment
+              ? `Repayment · ${debtKind(linking.debt.kind).label}`
+              : linking.debt.direction === "owed_to_us"
+                ? `Lent to ${linking.debt.counterparty_name}`
+                : `Borrowed from ${linking.debt.counterparty_name}`
+            : ""
+        }
+        amountPaisa={
+          linking
+            ? Number(linking.payment?.amount_paisa ?? linking.debt.principal_paisa)
+            : 0
+        }
+        date={linking ? (linking.payment?.date ?? linking.debt.opened_on) : ""}
+        /*
+          The direction flips for a repayment: lending money out means the
+          opening leg leaves the account, while the repayment coming back
+          arrives. Getting this wrong would test a lock on the wrong side and
+          check funds on money that is arriving.
+        */
+        direction={
+          linking
+            ? linking.payment
+              ? linking.debt.direction === "owed_to_us"
+                ? "income"
+                : "expense"
+              : linking.debt.direction === "owed_to_us"
+                ? "expense"
+                : "income"
+            : "expense"
+        }
         accounts={accounts}
       />
 
@@ -502,6 +644,15 @@ export default function DebtsPage() {
                 {
                   kind: "Account entry",
                   label: `${deletingPayment.debt.direction === "owed_to_us" ? `${deletingPayment.debt.counterparty_name} repaid` : `Repaid ${deletingPayment.debt.counterparty_name}`} · ${formatPKR(Number(deletingPayment.payment.amount_paisa))}`,
+                  // Named AND reachable. A dialog that lists what it is about to
+                  // destroy but offers no way to look at it asks for the user's
+                  // trust rather than their judgement.
+                  href: ledgerRefFor(
+                    deletingPayment.payment.transaction_id,
+                    ledgerRows[deletingPayment.payment.transaction_id]?.date ??
+                      deletingPayment.payment.date,
+                    "transfer",
+                  ).href,
                 },
               ]
             : []
@@ -530,13 +681,28 @@ export default function DebtsPage() {
           deleting
             ? [
                 ...(deleting.opening_transaction_id
-                  ? [{ kind: "Transaction", label: "The opening entry in your account" }]
+                  ? [
+                      {
+                        kind: "Transaction",
+                        label: `The opening entry · ${formatPKR(Number(deleting.principal_paisa))}`,
+                        href: ledgerRefFor(
+                          deleting.opening_transaction_id,
+                          ledgerRows[deleting.opening_transaction_id]?.date ?? deleting.opened_on,
+                          "transfer",
+                        ).href,
+                      },
+                    ]
                   : []),
                 ...deleting.payments
                   .filter((p) => p.transaction_id)
                   .map((p) => ({
                     kind: "Transaction",
                     label: `Repayment · ${formatPKR(Number(p.amount_paisa))}`,
+                    href: ledgerRefFor(
+                      p.transaction_id as string,
+                      ledgerRows[p.transaction_id as string]?.date ?? p.date,
+                      "transfer",
+                    ).href,
                   })),
               ]
             : []
@@ -628,6 +794,7 @@ function DebtColumn({
   direction,
   debts,
   readOnly,
+  ledgerRows,
   onAdd,
   onPay,
   onEdit,
@@ -636,12 +803,12 @@ function DebtColumn({
   onReopen,
   onWriteOff,
   onOpenHistory,
-  onEditPayment,
-  onDeletePayment,
+  onLink,
 }: {
   direction: DebtDirection;
   debts: DebtWithPayments[];
   readOnly: boolean;
+  ledgerRows: Record<string, LedgerRow>;
   onAdd: () => void;
   onPay: (debt: DebtWithPayments) => void;
   onEdit: (debt: Debt) => void;
@@ -650,8 +817,7 @@ function DebtColumn({
   onReopen: (debt: DebtWithPayments) => void;
   onWriteOff: (debt: DebtWithPayments) => void;
   onOpenHistory: (debt: DebtWithPayments) => void;
-  onEditPayment: (debt: DebtWithPayments, payment: DebtPayment) => void;
-  onDeletePayment: (debt: DebtWithPayments, payment: DebtPayment) => void;
+  onLink: (debt: DebtWithPayments) => void;
 }) {
   const openTotal = debts
     .filter((d) => d.status === "open")
@@ -693,6 +859,11 @@ function DebtColumn({
               <DebtCard
                 debt={debt}
                 readOnly={readOnly}
+                openingRow={
+                  debt.opening_transaction_id
+                    ? (ledgerRows[debt.opening_transaction_id] ?? null)
+                    : null
+                }
                 onPay={() => onPay(debt)}
                 onEdit={() => onEdit(debt)}
                 onDelete={() => onDelete(debt)}
@@ -700,8 +871,7 @@ function DebtColumn({
                 onReopen={() => onReopen(debt)}
                 onWriteOff={() => onWriteOff(debt)}
                 onOpenHistory={() => onOpenHistory(debt)}
-                onEditPayment={(payment) => onEditPayment(debt, payment)}
-                onDeletePayment={(payment) => onDeletePayment(debt, payment)}
+                onLink={() => onLink(debt)}
               />
             </Reveal>
           ))}
@@ -721,6 +891,7 @@ const TONE_CHIP: Record<string, string> = {
 function DebtCard({
   debt,
   readOnly,
+  openingRow,
   onPay,
   onEdit,
   onDelete,
@@ -728,11 +899,12 @@ function DebtCard({
   onReopen,
   onWriteOff,
   onOpenHistory,
-  onEditPayment,
-  onDeletePayment,
+  onLink,
 }: {
   debt: DebtWithPayments;
   readOnly: boolean;
+  /** The ledger row the opening leg wrote, or null when it never wrote one. */
+  openingRow: LedgerRow | null;
   onPay: () => void;
   onEdit: () => void;
   onDelete: () => void;
@@ -740,8 +912,7 @@ function DebtCard({
   onReopen: () => void;
   onWriteOff: () => void;
   onOpenHistory: () => void;
-  onEditPayment: (payment: DebtPayment) => void;
-  onDeletePayment: (payment: DebtPayment) => void;
+  onLink: () => void;
 }) {
   const kind = debtKind(debt.kind);
   const KindIcon = KIND_ICON[kind.icon] ?? HandCoins;
@@ -784,11 +955,16 @@ function DebtCard({
           </h3>
           <p className="text-muted flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
             <span>{kind.label}</span>
-            {/* When the money actually changed hands — the fact the card was
-                missing, and the first thing anyone asks about an old debt. */}
+            {/*
+              When the money actually changed hands.
+
+              `opened_on`, not `created_at`. A loan entered today for money lent
+              in June used to read "lent 2026-08-21", because the only date the
+              row carried was the day it was typed.
+            */}
             <span className="text-faint">
               {debt.direction === "owed_to_us" ? "lent" : "borrowed"}{" "}
-              <span className="ltr">{debt.created_at.slice(0, 10)}</span>
+              <span className="ltr">{debt.opened_on}</span>
             </span>
             {debt.status !== "open" && (
               <span className="border-border bg-surface-subtle rounded-full border px-1.5 py-0.5 text-[10px] leading-none font-medium">
@@ -800,6 +976,14 @@ function DebtCard({
 
         {!readOnly && (
           <RowActions
+            /*
+              The sync icon appears ONLY while this debt has no entry in any
+              account, so its presence is the whole message — every card without
+              it is already accounted for. It sits before the pencil because it
+              adds, where the other two change and destroy.
+            */
+            onSync={openingRow ? undefined : onLink}
+            syncLabel="Add this to your accounts"
             onEdit={onEdit}
             onDelete={onDelete}
             editLabel="Edit debt"
@@ -808,6 +992,19 @@ function DebtCard({
           />
         )}
       </div>
+
+      {/* Where this money actually sits in the ledger, as a link you can follow
+          and check — rather than a fact that only ever surfaced in the delete
+          dialog, which meant learning it by trying to remove something. */}
+      {openingRow && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <LedgerRefChip
+            transactionId={openingRow.id}
+            date={openingRow.date}
+            type={openingRow.type as "income" | "expense" | "transfer"}
+          />
+        </div>
+      )}
       </div>
 
       <div className="p-4 pt-3">

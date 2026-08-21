@@ -5,7 +5,7 @@ import { useLocale } from "next-intl";
 import { AlertTriangle, CircleDollarSign, Plus, TrendingDown } from "lucide-react";
 
 import { BudgetModal } from "@/components/budget-modal";
-import { CategoryIcon, categoryLabel } from "@/components/category-icon";
+import { CategoryArt, categoryLabel } from "@/components/category-icon";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { EmptyState } from "@/components/empty-state";
 import { EventBudgetPanel } from "@/components/event-budget-panel";
@@ -287,6 +287,7 @@ export default function BudgetsPage() {
       ) : budgets.length === 0 ? (
         <EmptyState
           title="No budgets yet"
+          imageSrc="/art/empty-budgets.webp"
           description="Cap the categories that get away from you — Kiryana, petrol, bijli, dining out. A cap on a main category covers everything inside it."
           action={
             <Button variant="primary" onClick={() => setAddOpen(true)} disabled={readOnly}>
@@ -423,9 +424,14 @@ function BudgetCard({
     // holding card and on the accounts page.
     <div className="group bg-surface border-border rounded-panel focus-within:border-brass/40 flex h-full flex-col border p-5 shadow-xs transition-colors">
       <div className="flex items-start gap-3">
-        <span className="bg-brass/10 text-brass-strong flex size-8 shrink-0 items-center justify-center rounded-card">
-          <CategoryIcon icon={category?.icon} size={16} />
-        </span>
+        {/*
+          56px, which is exactly `CategoryArt`'s threshold: at or above it the
+          real render is shown with no plate, below it the component silently
+          falls back to the Lucide glyph. A budget card is one of the few places
+          in the app with room for the art to actually read — most surfaces
+          render a category at 22–34px, where a diorama is a smudge.
+        */}
+        <CategoryArt category={category} size={56} rounded="rounded-card" />
 
         <div className="min-w-0 flex-1">
           <h3 className="font-display text-foreground truncate text-[13.5px] font-semibold">
@@ -444,7 +450,10 @@ function BudgetCard({
             onDelete={onDelete}
             editLabel="Edit budget"
             deleteLabel="Remove budget"
-            reveal="always"
+            // `hover`, matching the event-budget cards. These two sit on the
+            // same screen, and one card revealing its actions on hover while the
+            // one beside it shows them permanently reads as a rendering fault.
+            reveal="hover"
           />
         )}
       </div>

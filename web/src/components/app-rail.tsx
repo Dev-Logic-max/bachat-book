@@ -10,14 +10,13 @@ import {
   CalendarDays,
   CircleDollarSign,
   FileSpreadsheet,
+  HandCoins,
   HandHeart,
   Landmark,
   LayoutDashboard,
   ListChecks,
   LogOut,
   NotebookPen,
-  PanelLeftClose,
-  PanelLeftOpen,
   PieChart,
   ScanLine,
   Settings,
@@ -79,7 +78,9 @@ type RailItem = {
 
 export function AppRail({ session }: { session?: UserSession | null }) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = useRailCollapsed();
+  // Read-only here. The TOGGLE lives in the header (`app-top-bar.tsx`); both
+  // read the same store, so the rail still re-renders when it changes.
+  const [collapsed] = useRailCollapsed();
 
   /*
    * Ordered by how often a rupee-a-day user actually touches each screen, not by
@@ -107,6 +108,7 @@ export function AppRail({ session }: { session?: UserSession | null }) {
     { icon: TrendingUp, label: "Investments", href: "/wealth/investments" },
     { icon: Users, label: "Committee", href: "/wealth/committees" },
     { icon: HandHeart, label: "Zakat", href: "/wealth/zakat" },
+    { icon: HandCoins, label: "Udhaar", href: "/debts" },
     { icon: Contact, label: "Contacts", href: "/contacts" },
   ];
 
@@ -365,8 +367,8 @@ export function AppRail({ session }: { session?: UserSession | null }) {
             <span
               aria-hidden
               className={cn(
-                "pointer-events-none absolute -end-6 -top-8 size-20 rounded-full blur-2xl",
-                isFiler ? "bg-brass/25" : "bg-white/[0.04]",
+                "pointer-events-none absolute -inset-e-6 -top-8 size-20 rounded-full blur-2xl",
+                isFiler ? "bg-brass/25" : "bg-white/4",
               )}
             />
 
@@ -374,13 +376,13 @@ export function AppRail({ session }: { session?: UserSession | null }) {
               <span
                 className={cn(
                   "flex size-6 shrink-0 items-center justify-center rounded-full",
-                  isFiler ? "bg-brass/20 text-brass" : "bg-white/[0.06] text-on-navy-muted",
+                  isFiler ? "bg-brass/20 text-brass" : "bg-white/6 text-on-navy-muted",
                 )}
               >
                 {isFiler ? <ShieldCheck size={13} /> : <Landmark size={13} />}
               </span>
 
-              <span className="text-on-navy-muted min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-[0.1em]">
+              <span className="text-on-navy-muted min-w-0 flex-1 text-[10px] font-semibold uppercase tracking-widest">
                 FBR status
               </span>
 
@@ -389,7 +391,7 @@ export function AppRail({ session }: { session?: UserSession | null }) {
                 onClick={dismissFilerCard}
                 aria-label="Hide the FBR status card"
                 title="Hide — you can bring it back from Settings → Preferences"
-                className="text-on-navy-muted hover:bg-white/[0.09] hover:text-on-navy -me-1 flex size-5 shrink-0 items-center justify-center rounded-full opacity-100 transition-all lg:opacity-0 lg:group-hover/fbr:opacity-100 lg:group-focus-within/fbr:opacity-100"
+                className="text-on-navy-muted hover:bg-white/9 hover:text-on-navy -me-1 flex size-5 shrink-0 items-center justify-center rounded-full opacity-100 transition-all lg:opacity-0 lg:group-hover/fbr:opacity-100 lg:group-focus-within/fbr:opacity-100"
               >
                 <X size={12} />
               </button>
@@ -426,29 +428,16 @@ export function AppRail({ session }: { session?: UserSession | null }) {
         </div>
       )}
 
-      {/* Pinned footer: collapse toggle, profile, sign out */}
-      <div className={cn("shrink-0 pb-6 pt-4", collapsed ? "px-3" : "px-4")}>
-        <button
-          type="button"
-          onClick={() => setCollapsed(!collapsed)}
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-          aria-pressed={collapsed}
-          className={cn(
-            "text-on-navy-muted hover:bg-white/[0.07] hover:text-on-navy mb-2 flex w-full items-center rounded-control py-2 text-[12px] transition-colors",
-            collapsed ? "justify-center" : "gap-2.5 px-3",
-          )}
-        >
-          {collapsed ? (
-            <PanelLeftOpen size={16} strokeWidth={1.75} />
-          ) : (
-            <>
-              <PanelLeftClose size={16} strokeWidth={1.75} className="shrink-0" />
-              <span className="truncate">Collapse</span>
-            </>
-          )}
-        </button>
+      {/*
+        Pinned footer: profile and sign out.
 
+        The collapse toggle used to live here. It moved to the LEFT END OF THE
+        HEADER, which is where a sidebar toggle is looked for — and where it is
+        reachable below `lg`, since the rail does not render at all at those
+        widths and a control buried inside it could never be used to bring it
+        back. See `app-top-bar.tsx`; both read the same `useRailCollapsed` store.
+      */}
+      <div className={cn("shrink-0 pb-6 pt-4", collapsed ? "px-3" : "px-4")}>
         <div
           className={cn(
             "border-navy-700 flex items-center border-t pt-4",

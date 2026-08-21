@@ -39,7 +39,13 @@ export function Panel({
         className,
       )}
     >
-      <header className="flex items-center justify-between gap-3 px-5 pb-3 pt-4">
+      {/*
+        The head is a GRADIENT into the body, matching the category cards and
+        the entries table header: deepest at the top edge, gone by the rule.
+        `rounded-t-panel` so the tint follows the panel's own corner instead of
+        squaring it off, and `border-b` gives the body something to start from.
+      */}
+      <header className="bg-linear-to-b from-surface-3 to-surface border-border rounded-t-panel flex items-center justify-between gap-3 border-b px-5 pb-3 pt-4">
         <h2 className="font-display text-[15px] font-semibold tracking-[-0.01em]">
           {title}
         </h2>

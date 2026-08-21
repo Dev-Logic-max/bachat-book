@@ -102,7 +102,8 @@ Before those: the 26/126 category catalogue, the two-tier ownership model, the
    correctly refuses every request without it), `WHATSAPP_VERIFY_TOKEN` and
    `WHATSAPP_APP_SECRET` (webhook).
 4. **Leaked-password protection is off** in Supabase Auth, and the seed admin
-   password is still `password@admin`.
+   seed admin account still has its original weak password. The repo is PUBLIC
+   and the literal string is in earlier commits — rotate it in Supabase.
 5. **M5–M10** have screens without schema. Each needs schema → API → screens.
 6. **Nothing is deployed.** No Vercel project yet.
 

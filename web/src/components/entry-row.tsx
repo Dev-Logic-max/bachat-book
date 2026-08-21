@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownRight, ArrowUpRight, CalendarDays } from "lucide-react";
+import { ArrowDownRight, ArrowUpRight, CalendarDays, Tag } from "lucide-react";
 import { CategoryChip, CategoryIcon, toneColor } from "@/components/category-icon";
 import { MerchantMark } from "@/components/merchant-mark";
 import { RowActions } from "@/components/ui/row-actions";
@@ -41,9 +41,41 @@ export type EntryAccountRef = {
  * `grid` next to a `hidden` would win or lose depending on stylesheet order
  * rather than on what was written. Each user states its own display.
  */
+/*
+ * At `lg` the content column is genuinely narrow (1024px less a 248px rail), so
+ * the fixed tracks below are right there and must not grow.
+ *
+ * On a wide monitor they are wrong in the other direction: Entry is the only
+ * `1fr` track, so it swallows every spare pixel and sits half-empty while
+ * Category is pushed to the far right and still truncates "Home & Kitchen
+ * Goods". From `2xl` the slack is SHARED — Category becomes a second flexible
+ * track — which pulls it left and widens it at the same time.
+ */
 const ENTRY_COLS =
   "items-center gap-x-3 grid-cols-[36px_minmax(0,1fr)_auto_auto] " +
-  "lg:grid-cols-[36px_minmax(0,1fr)_148px_96px_150px_118px_72px]";
+  "lg:grid-cols-[36px_minmax(0,1fr)_148px_96px_150px_118px_72px] " +
+  "2xl:grid-cols-[36px_minmax(0,1fr)_minmax(200px,0.45fr)_96px_170px_130px_72px]";
+
+/**
+ * The SAME row, in a narrower container.
+ *
+ * `EntryRow` is shared by the Entries page and the dashboard panel, and those
+ * are very different widths: Entries gets the full content column, the panel
+ * gets two thirds of a three-column grid. The fixed tracks above are tuned for
+ * the wide one and are correct there — but in the panel they consume almost
+ * everything, so the title is squeezed to a few characters while the slack in
+ * the right-aligned amount track opens a gap between the account and the
+ * figure.
+ *
+ * Fixing that by editing the shared template broke the page it was already
+ * right on. So the panel opts into its own template instead: the two metadata
+ * columns give up ~60px, and amount and actions become `max-content` so they
+ * size to the widest figure rather than to a guess. Grid tracks are shared down
+ * a column, so every row still lines up.
+ */
+const ENTRY_COLS_DENSE =
+  "items-center gap-x-3 grid-cols-[36px_minmax(0,1fr)_auto_auto] " +
+  "lg:grid-cols-[32px_minmax(0,1fr)_132px_74px_minmax(96px,128px)_max-content_max-content]";
 
 /**
  * Column headings for the entries table.
@@ -53,14 +85,21 @@ const ENTRY_COLS =
  * grey text; one tint of separation is what makes the block read as a table and
  * gives the list a top edge to hang from.
  */
-export function EntryRowHeader() {
+export function EntryRowHeader({ dense = false }: { dense?: boolean }) {
   return (
     <li
       className={cn(
-        ENTRY_COLS,
-        // No border-b: the list's `divide-y` already draws the rule under this
-        // row, and both together rendered a 2px line.
-        "bg-surface-subtle text-muted hidden px-5 py-2 text-[10px] font-semibold uppercase tracking-widest lg:grid",
+        dense ? ENTRY_COLS_DENSE : ENTRY_COLS,
+        /*
+          A GRADIENT, not a flat tint — the same language as the category card
+          heads: deepest at the top edge, fading into the first row, with the
+          list's own `divide-y` drawing the rule beneath. A flat block of
+          `surface-subtle` sat as a grey slab; the fade gives the table a top
+          edge to hang from without adding a second hard line.
+          No border-b here: `divide-y` already draws it, and both together
+          rendered 2px.
+        */
+        "bg-linear-to-b from-surface-3 to-surface-subtle text-muted hidden px-5 py-2.5 text-[10px] font-semibold uppercase tracking-widest lg:grid",
       )}
     >
       <span />
@@ -86,6 +125,7 @@ export function EntryRow({
   onEdit,
   onDelete,
   className,
+  dense = false,
 }: {
   entry: EntryWithCategory;
   /** Which balance this moved. Always present — every entry names an account. */
@@ -93,6 +133,8 @@ export function EntryRow({
   onEdit?: () => void;
   onDelete?: () => void;
   className?: string;
+  /** Narrower tracks, for the dashboard panel rather than the full-width page. */
+  dense?: boolean;
 }) {
   // The column is SIGNED; `type` agrees with it by constraint. Read the sign so
   // the row cannot disagree with the balance it moved.
@@ -104,17 +146,24 @@ export function EntryRow({
   return (
     <li
       className={cn(
-        ENTRY_COLS,
+        dense ? ENTRY_COLS_DENSE : ENTRY_COLS,
         "group hover:bg-surface-subtle/60 relative grid px-5 py-2.5 transition-colors",
         className,
       )}
     >
       {entry.categories ? (
+        /*
+          The three marks on this row are now one family: the leading chip, the
+          category tag's glyph and the account's brand mark used to be 34 / 11 /
+          18, which read as three unrelated things competing down the row. The
+          leading chip stays the largest — it is the row's anchor — but only by
+          a step, and the two inline marks now match each other.
+        */
         <CategoryChip
           icon={entry.categories.icon}
           tone={entry.categories.tone}
-          size={34}
-          iconSize={15}
+          size={32}
+          iconSize={16}
         />
       ) : (
         <div
@@ -190,11 +239,22 @@ export function EntryRow({
               color: toneColor(entry.categories.tone),
             }}
           >
-            <CategoryIcon icon={entry.categories.icon} size={11} />
+            <CategoryIcon icon={entry.categories.icon} size={13} />
             <span className="truncate">{categoryName}</span>
           </span>
         ) : (
-          <span className="text-faint text-[11px] italic">Uncategorised</span>
+          /*
+            The SAME pill shape, not bare text.
+            A tagged row's label starts ~27px into the cell (8px padding + a
+            13px glyph + the gap); plain text started at 0, so every
+            uncategorised row visibly hung left of the column it was in. Giving
+            it the same box — dashed and muted, so it still reads as "nothing
+            chosen" — lines the column up without pretending it has a category.
+          */
+          <span className="border-border text-faint inline-flex items-center gap-1.5 rounded-full border border-dashed px-2 py-1 text-[11px] font-medium">
+            <Tag size={13} className="opacity-60" />
+            Uncategorised
+          </span>
         )}
       </span>
 
@@ -215,7 +275,7 @@ export function EntryRow({
               brand={account.brand}
               logo={account.logo ?? undefined}
               awaitingLogo={account.awaitingLogo}
-              size={18}
+              size={26}
             />
             <span
               className={cn(

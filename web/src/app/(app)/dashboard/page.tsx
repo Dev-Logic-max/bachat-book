@@ -3,11 +3,16 @@
 import * as React from "react";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   ArrowDownRight,
   ArrowUpRight,
   BadgeCheck,
+  CalendarDays,
   ListChecks,
   Plus,
+  Receipt,
+  Repeat,
+  RotateCcw,
   Search,
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
@@ -20,10 +25,14 @@ import { QuickAddModal } from "@/components/quick-add-modal";
 // The full task form, not a cut-down one. A "quick" add that omitted subtasks,
 // payment and repeat taught you those fields did not exist.
 import { TaskFormModal } from "@/components/task-form-modal";
+import { CompleteTaskModal } from "@/components/complete-task-modal";
+import { ConfirmActionModal } from "@/components/confirm-action-modal";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { useToast } from "@/components/ui/toast";
 import { createClient } from "@/lib/supabase/client";
 import { deleteMovement } from "@/lib/ledger-actions";
+import { completeTask, uncompleteTask, type SettleInput } from "@/lib/task-actions";
+import { deriveStatus, dueLabel, dueTone, type TaskWithChecklist } from "@/lib/tasks";
 import { institutionLogo, monthBounds, netWorthSeries, rangePoints } from "@/lib/ledger";
 import { formatHijri, formatPKR } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -55,8 +64,13 @@ export default function DashboardPage() {
   const [taskModalOpen, setTaskModalOpen] = React.useState(false);
 
   const [entries, setEntries] = React.useState<EntryWithCategory[]>([]);
-  const [tasks, setTasks] = React.useState<Tables<"tasks">[]>([]);
+  const [tasks, setTasks] = React.useState<TaskWithChecklist[]>([]);
   const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
+  // Needed by the settle modal, which offers a category for the entry it writes.
+  const [categories, setCategories] = React.useState<Tables<"categories">[]>([]);
+  const [completingTask, setCompletingTask] = React.useState<TaskWithChecklist | null>(null);
+  const [reopeningTask, setReopeningTask] = React.useState<TaskWithChecklist | null>(null);
+  const [taskBusy, setTaskBusy] = React.useState(false);
   const [transactions, setTransactions] = React.useState<
     Array<
       Pick<
@@ -76,7 +90,7 @@ export default function DashboardPage() {
     let active = true;
 
     async function load() {
-      const [entriesRes, tasksRes, accountsRes, txRes] = await Promise.all([
+      const [entriesRes, tasksRes, accountsRes, txRes, categoriesRes] = await Promise.all([
         // Entries = income and expense from the single ledger. Transfers and
         // opening balances are excluded: neither is money earned or spent.
         supabase
@@ -90,7 +104,7 @@ export default function DashboardPage() {
           .limit(200),
         supabase
           .from("tasks")
-          .select("*")
+          .select("*, task_checklist_items(*)")
           .eq("household_id", householdId)
           .order("is_done", { ascending: true })
           .order("due_date", { ascending: true })
@@ -111,11 +125,13 @@ export default function DashboardPage() {
           .select("id, date, amount_paisa, account_id, type, is_opening")
           .eq("household_id", householdId)
           .order("date", { ascending: false }),
+        supabase.from("categories").select("*").order("sort_order").order("name"),
       ]);
 
       if (!active) return;
       if (entriesRes.data) setEntries(entriesRes.data as unknown as EntryWithCategory[]);
-      if (tasksRes.data) setTasks(tasksRes.data);
+      if (tasksRes.data) setTasks(tasksRes.data as unknown as TaskWithChecklist[]);
+      if (categoriesRes.data) setCategories(categoriesRes.data);
       if (accountsRes.data) {
         setAccounts(accountsRes.data as unknown as AccountWithInstitution[]);
       }
@@ -244,11 +260,90 @@ export default function DashboardPage() {
 
   const recentEntries = entries.slice(0, 8);
 
-  const toggleTaskStatus = async (taskId: string, currentStatus: boolean) => {
-    setTasks((prev) =>
-      prev.map((t) => (t.id === taskId ? { ...t, is_done: !currentStatus } : t)),
-    );
-    await supabase.from("tasks").update({ is_done: !currentStatus }).eq("id", taskId);
+  /*
+   * COMPLETING A TASK HERE MUST DO WHAT IT DOES ON THE TASKS PAGE.
+   *
+   * This used to be a bare `update({ is_done })`. For a task that moves money
+   * that is a silent data loss: ticking "Electricity Bill (MEPCO)" marked it
+   * paid and wrote NO ledger entry, so the bill was done and the Rs 4,200 never
+   * left any account. The same tick on /tasks opened the settle modal and wrote
+   * the payment. One of the two was lying, and it was this one.
+   *
+   * Both directions now go through the same helpers the Tasks page uses:
+   * completing opens the settle modal, and un-completing deletes the movement
+   * it wrote — because un-ticking silently must not leave the money spent.
+   */
+  const requestToggleTask = (task: TaskWithChecklist) => {
+    if (deriveStatus(task) === "done") {
+      setReopeningTask(task);
+      return;
+    }
+    setCompletingTask(task);
+  };
+
+  const handleCompleteTask = async (settle: SettleInput | null) => {
+    if (!completingTask) return;
+    setTaskBusy(true);
+    try {
+      const { transactionId, spawnedId } = await completeTask(
+        supabase,
+        completingTask,
+        settle,
+        userId,
+      );
+      showToast({
+        type: "success",
+        title: "Task completed",
+        description:
+          [
+            transactionId && settle
+              ? `${formatPKR(settle.amountPaisa)} recorded in your ledger.`
+              : null,
+            spawnedId ? "The next one is on the board." : null,
+          ]
+            .filter(Boolean)
+            .join(" ") || undefined,
+      });
+      setCompletingTask(null);
+      reload();
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not complete the task",
+        description: err instanceof Error ? err.message : "Unknown error.",
+      });
+    } finally {
+      setTaskBusy(false);
+    }
+  };
+
+  const handleReopenTask = async () => {
+    if (!reopeningTask) return;
+    setTaskBusy(true);
+    try {
+      await uncompleteTask(
+        supabase,
+        reopeningTask,
+        Boolean(reopeningTask.settled_transaction_id),
+      );
+      showToast({
+        type: "success",
+        title: "Back on the board",
+        description: reopeningTask.settled_transaction_id
+          ? "The entry it wrote has been removed and the account re-settled."
+          : undefined,
+      });
+      setReopeningTask(null);
+      reload();
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not reopen it",
+        description: err instanceof Error ? err.message : "Unknown error.",
+      });
+    } finally {
+      setTaskBusy(false);
+    }
   };
 
   const submitSearch = (e: React.FormEvent) => {
@@ -453,6 +548,9 @@ export default function DashboardPage() {
                   <EntryRow
                     key={entry.id}
                     entry={entry}
+                    /* This panel is two thirds of a three-column grid, not the
+                       full content width the Entries page gets. */
+                    dense
                     account={accountRefById.get(entry.account_id) ?? null}
                     onEdit={() => {
                       const amt = Number(entry.amount_paisa);
@@ -478,11 +576,24 @@ export default function DashboardPage() {
         <Reveal index={2}>
           <Panel title="Needs You" action={`${openTasks} open`}>
             {tasks.length === 0 ? (
-              <div className="py-4 text-center">
-                <p className="text-muted text-xs">No pending financial tasks.</p>
+              /* Was a bare line of grey text beside an illustrated empty state
+                 in the panel next to it — the two read as different products. */
+              <div className="flex flex-col items-center py-2 text-center">
+                <img
+                  src="/art/empty-tasks.webp"
+                  alt=""
+                  className="mb-2 size-28 object-contain"
+                />
+                <p className="text-foreground text-[13px] font-semibold">
+                  Nothing needs you
+                </p>
+                <p className="text-muted mt-1 max-w-52 text-[11.5px] leading-relaxed">
+                  Bills, fees and chores land here. Mark one as moving money and
+                  completing it logs the payment for you.
+                </p>
                 <button
                   onClick={() => setTaskModalOpen(true)}
-                  className="text-brass-strong mt-2 text-xs font-semibold hover:underline"
+                  className="text-brass-strong mt-2.5 text-xs font-semibold hover:underline"
                 >
                   + Create a task
                 </button>
@@ -493,7 +604,7 @@ export default function DashboardPage() {
                   <li key={task.id}>
                     <button
                       type="button"
-                      onClick={() => toggleTaskStatus(task.id, task.is_done)}
+                      onClick={() => requestToggleTask(task)}
                       className={cn(
                         "bg-surface-subtle hover:bg-surface-3 flex w-full items-center justify-between gap-2 rounded-control p-3 text-left transition-colors",
                         task.is_done && "opacity-60",
@@ -506,7 +617,7 @@ export default function DashboardPage() {
                           readOnly
                           tabIndex={-1}
                           aria-hidden
-                          className="accent-navy-900 dark:accent-brass size-4 rounded"
+                          className="accent-navy-900 dark:accent-brass size-4 shrink-0 rounded"
                         />
                         <span className="min-w-0">
                           <span
@@ -517,11 +628,47 @@ export default function DashboardPage() {
                           >
                             {task.title}
                           </span>
-                          {task.due_date && (
-                            <span className="text-faint block text-[10.5px]">
-                              Due <span className="ltr">{task.due_date}</span>
-                            </span>
-                          )}
+
+                          {/*
+                            The SAME facts the task card carries, in the same
+                            order: when it is due (coloured by urgency, not
+                            always grey), whether it moves money, and how
+                            often it repeats. Subtasks are deliberately left
+                            out — this panel answers "what needs me", and the
+                            checklist belongs on the board.
+                          */}
+                          <span className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1">
+                            {task.due_date && (
+                              <span
+                                className={cn(
+                                  "inline-flex items-center gap-1 text-[10.5px] font-medium",
+                                  task.is_done
+                                    ? "text-faint"
+                                    : dueTone(task.due_date, task.priority) === "overdue"
+                                      ? "text-loss"
+                                      : dueTone(task.due_date, task.priority) === "soon"
+                                        ? "text-brass-strong"
+                                        : "text-muted",
+                                )}
+                              >
+                                <CalendarDays size={10} />
+                                {dueLabel(task.due_date)}
+                              </span>
+                            )}
+
+                            {task.is_paid && task.amount_paisa ? (
+                              <span className="border-border bg-surface text-foreground-2 tnum inline-flex items-center rounded-full border px-1.5 py-0.5 text-[10px] font-medium">
+                                {formatPKR(Number(task.amount_paisa))}
+                              </span>
+                            ) : null}
+
+                            {task.repeat_rule !== "none" && (
+                              <span className="text-faint inline-flex items-center gap-0.5 text-[10px]">
+                                <Repeat size={9} />
+                                {task.repeat_rule}
+                              </span>
+                            )}
+                          </span>
                         </span>
                       </span>
                       {task.linked_label && (
@@ -575,6 +722,54 @@ export default function DashboardPage() {
             : undefined
         }
         confirmLabel="Delete entry"
+      />
+
+      {/* The SAME two dialogs the Tasks page uses, so a tick means the same
+          thing on both screens. */}
+      <CompleteTaskModal
+        isOpen={completingTask !== null}
+        onClose={() => setCompletingTask(null)}
+        onConfirm={handleCompleteTask}
+        task={completingTask}
+        accounts={accounts}
+        categories={categories}
+        busy={taskBusy}
+      />
+
+      <ConfirmActionModal
+        isOpen={reopeningTask !== null}
+        onClose={() => setReopeningTask(null)}
+        onConfirm={handleReopenTask}
+        title="Put this back on the board?"
+        icon={<RotateCcw size={16} />}
+        headline={reopeningTask?.title}
+        points={
+          reopeningTask?.settled_transaction_id
+            ? [
+                {
+                  icon: <Receipt size={13} />,
+                  label: "The entry it wrote is deleted",
+                  detail:
+                    "The account is re-settled, so the balance goes back to what it was before you completed this.",
+                },
+                {
+                  icon: <AlertTriangle size={13} />,
+                  label: "Only do this if the payment did not happen",
+                  detail:
+                    "If it did and the figure is wrong, edit the task instead — the entry follows it, and no money is invented.",
+                },
+              ]
+            : [
+                {
+                  icon: <RotateCcw size={13} />,
+                  label: "It just goes back onto the board",
+                  detail:
+                    "This task does not move money, so nothing in your ledger changes.",
+                },
+              ]
+        }
+        confirmLabel="Reopen task"
+        busy={taskBusy}
       />
     </div>
   );

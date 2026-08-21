@@ -362,7 +362,7 @@ export default function CategorySettingsPage() {
 
       {/* ---- Catalogue ---------------------------------------------------- */}
       {loading ? (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }, (_, i) => (
             <Skeleton key={i} className="h-44 rounded-panel" />
           ))}
@@ -372,7 +372,7 @@ export default function CategorySettingsPage() {
           Nothing matches “{query}”.
         </p>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           {groups.map(({ parent, children }, i) => (
             <Reveal key={parent.id} index={Math.min(i, 8)}>
               <ParentCard
@@ -494,7 +494,21 @@ function ParentCard({
           background: `linear-gradient(to bottom, color-mix(in oklab, ${tint} 7%, transparent), transparent)`,
         }}
       >
-        <CategoryArt category={parent} size={42} />
+        {/*
+          64px, not 42. This is the one surface where the rendered art is the
+          point, and below ~56px `CategoryArt` deliberately falls back to the
+          glyph — a diorama of a karahi, naan and a glass has nothing to say in
+          42 pixels. No plate either: the render is a finished object with its
+          own shadow, and a tinted square behind it just boxes it in.
+        */}
+        {/*
+          `rounded-card`, not `rounded-none`. The art is transparent so the
+          corner never shows on it — but when a category has no render yet the
+          component falls back to the GLYPH ON A TINTED PLATE, and a square
+          plate in a row of round ones is what "Transfer" and "To Savings"
+          looked like before they had art.
+        */}
+        <CategoryArt category={parent} size={64} />
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">

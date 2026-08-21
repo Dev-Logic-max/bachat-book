@@ -54,7 +54,7 @@ import {
   PartyPopper,
   PawPrint,
   Percent,
-  PiggyBank,
+  Vault,
   Pill,
   Plane,
   ReceiptText,
@@ -148,7 +148,7 @@ const ICONS: Record<string, LucideIcon> = {
   PartyPopper,
   PawPrint,
   Percent,
-  PiggyBank,
+  Vault,
   Pill,
   Plane,
   ReceiptText,
@@ -285,20 +285,43 @@ export function CategoryChip({
  * 3. THE FALLBACK IS NOT A GREY BOX. Same rule as MerchantMark: a placeholder
  *    that says nothing reads as a rendering fault.
  */
+/**
+ * BELOW THIS, THE ART IS NEVER USED — the glyph is.
+ *
+ * The renders are photographic dioramas: `food` is a karahi, naan, a glass, a
+ * spoon and a fork. At 22px that is ~480 pixels to say all of it, and it
+ * resolves to a brown smudge. A Lucide glyph is *designed* for that size —
+ * single weight, single colour, and it takes the category's tone.
+ *
+ * This is not a quality problem that a better render fixes; it is a resolution
+ * one. So the choice is made here, once, on size — rather than by asking twelve
+ * call sites to remember which representation they should be passing.
+ */
+const ART_MIN_SIZE = 56;
+
 export function CategoryArt({
   category,
   size = 44,
   className,
   rounded = "rounded-card",
+  plate,
 }: {
   category: CategoryLike | null | undefined;
   size?: number;
   className?: string;
   /** The plate's corner. Round for list rows, `rounded-card` for tiles. */
   rounded?: string;
+  /**
+   * The tinted backing. Defaults ON for the glyph (which needs a ground to sit
+   * on) and OFF for the art (which is a finished object with its own shadow —
+   * a tinted square behind it just boxes it in).
+   */
+  plate?: boolean;
 }) {
-  const art = category?.art_path ?? null;
   const color = toneColor(category?.tone);
+
+  // Small renders ignore `art_path` entirely: no request, no decode, no smudge.
+  const art = size >= ART_MIN_SIZE ? (category?.art_path ?? null) : null;
 
   /*
    * Reset the failure flag when the art changes. Done in render rather than an
@@ -313,6 +336,7 @@ export function CategoryArt({
   }
 
   const showArt = Boolean(art) && failedFor !== art;
+  const showPlate = plate ?? !showArt;
 
   return (
     <span
@@ -320,7 +344,9 @@ export function CategoryArt({
       style={{
         width: size,
         height: size,
-        background: `color-mix(in oklab, ${color} 14%, transparent)`,
+        background: showPlate
+          ? `color-mix(in oklab, ${color} 14%, transparent)`
+          : undefined,
         color,
       }}
     >
@@ -331,10 +357,17 @@ export function CategoryArt({
           loading="lazy"
           decoding="async"
           onError={() => setFailedFor(art)}
-          // Inset so the object sits ON the plate rather than bleeding to its
-          // edge, which is what makes a set of them read as one system even when
-          // the renders are cropped slightly differently.
-          style={{ width: size * 0.74, height: size * 0.74 }}
+          /*
+           * Fills its box when there is no plate. The 0.74 inset existed to keep
+           * the object sitting ON the tinted square rather than bleeding to its
+           * edge — with the plate gone that inset is just wasted space, and the
+           * whole reason to show art at all is that it is big enough to read.
+           */
+          style={
+            showPlate
+              ? { width: size * 0.74, height: size * 0.74 }
+              : { width: size, height: size }
+          }
           className="object-contain"
         />
       ) : (

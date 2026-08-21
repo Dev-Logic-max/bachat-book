@@ -13,7 +13,7 @@ import {
   Landmark,
   Link2,
   Map as MapIcon,
-  PiggyBank,
+  Vault,
   Plus,
   Search,
   Ticket,
@@ -39,6 +39,7 @@ import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
 import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
 import { Input } from "@/components/ui/input";
+import { Modal } from "@/components/ui/modal";
 import { RichSelect } from "@/components/ui/select";
 import { RowActions } from "@/components/ui/row-actions";
 import { useToast } from "@/components/ui/toast";
@@ -63,6 +64,7 @@ import {
 } from "@/lib/investments";
 import {
   deleteInvestment,
+  deletePayout,
   loadIntegrations,
   reopenInvestment,
 } from "@/lib/investment-actions";
@@ -81,7 +83,7 @@ const KIND_ICON: Record<string, React.ComponentType<{ size?: number; className?:
   Gem,
   Map: MapIcon,
   Factory,
-  PiggyBank,
+  Vault,
   Globe,
   Bitcoin,
   Boxes,
@@ -142,6 +144,12 @@ export default function InvestmentsPage() {
   const [closing, setClosing] = React.useState<Holding | null>(null);
   const [linking, setLinking] = React.useState<Holding | null>(null);
   const [deleting, setDeleting] = React.useState<Holding | null>(null);
+  const [deletingPayout, setDeletingPayout] = React.useState<{
+    payout: Payout;
+    holding: Holding;
+  } | null>(null);
+  /** "Record profit" from the section header, when there is more than one holding. */
+  const [pickingHolding, setPickingHolding] = React.useState(false);
 
   React.useEffect(() => {
     let active = true;
@@ -318,6 +326,12 @@ export default function InvestmentsPage() {
   /* Profit rolled up, over the holdings currently in view — so filtering to
      "gold" answers "what has gold paid me", not "what has everything paid me". */
   const visibleIds = React.useMemo(() => new Set(visible.map((h) => h.id)), [visible]);
+  /** Only an OPEN holding can take a new payout — a sold one has no more to pay. */
+  const openHoldings = React.useMemo(
+    () => holdings.filter((h) => isHoldingOpen(h)),
+    [holdings],
+  );
+
   const payoutBuckets = React.useMemo(
     () => payoutsByPeriod(payouts.filter((p) => visibleIds.has(p.investment_id)), period),
     [payouts, visibleIds, period],
@@ -352,6 +366,39 @@ export default function InvestmentsPage() {
       await deleteInvestment(supabase, deleting, cascade);
       showToast({ type: "success", title: "Holding removed", description: `"${deleting.name}" is gone.` });
       setDeleting(null);
+      refresh();
+    } catch (err) {
+      showToast({
+        type: "error",
+        title: "Could not remove it",
+        description: err instanceof Error ? err.message : "Something went wrong.",
+      });
+    }
+  };
+
+  /**
+   * Remove one profit payment from the roll-up.
+   *
+   * `deletePayout` does the two-sided unwind: it deletes the income entry the
+   * payout wrote, and — for a REINVESTED one — walks the holding's value back
+   * down, since recording it had grown that value.
+   */
+  const handleDeletePayout = async () => {
+    if (!deletingPayout) return;
+    const { payout, holding } = deletingPayout;
+    try {
+      await deletePayout(supabase, holding, payout);
+      showToast({
+        type: "success",
+        title: "Payment removed",
+        description:
+          payout.destination === "reinvested"
+            ? "The holding's value was walked back down by the same amount."
+            : payout.transaction_id
+              ? "The income entry it wrote went with it."
+              : "It never touched an account, so no balance changed.",
+      });
+      setDeletingPayout(null);
       refresh();
     } catch (err) {
       showToast({
@@ -626,6 +673,7 @@ export default function InvestmentsPage() {
       ) : holdings.length === 0 ? (
         <EmptyState
           title="Nothing recorded yet"
+          imageSrc="/art/empty-investments.webp"
           description="Add the Behbood certificates, the tola of gold, the plot file, the shares — anything you own that is not in a bank account. Nothing here touches your balances unless you ask it to."
           action={
             <Button variant="primary" onClick={() => setAddOpen(true)} disabled={readOnly}>
@@ -675,6 +723,28 @@ export default function InvestmentsPage() {
               </p>
             </div>
 
+            <div className="flex flex-wrap items-center gap-2">
+              {/*
+                The second way in. The per-card "Record profit" button is the
+                first, but this section is where someone looking at their profit
+                history actually is when they think "add another one" — and a
+                list with no way to add to it reads as read-only.
+              */}
+              {!readOnly && openHoldings.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    openHoldings.length === 1
+                      ? setPayingOut(openHoldings[0])
+                      : setPickingHolding(true)
+                  }
+                >
+                  <Plus size={13} />
+                  Record profit
+                </Button>
+              )}
+
             <div className="border-border bg-surface-subtle rounded-control flex items-center gap-1 border p-1 text-[11px]">
               {PERIODS.map((p) => (
                 <button
@@ -691,32 +761,81 @@ export default function InvestmentsPage() {
                 </button>
               ))}
             </div>
+            </div>
           </div>
 
-          <div className="bg-surface border-border rounded-panel divide-border divide-y overflow-hidden border shadow-xs">
+          {/*
+            The individual payments, grouped under a period heading — NOT an
+            expandable aggregate. A row you must open before you can correct it
+            hides the one action the list exists for; a profit typed as 115000
+            instead of 11500 should be one hover away, not two clicks.
+
+            The period heading still carries the roll-up total, so the grain
+            buttons above keep their meaning.
+          */}
+          <div className="bg-surface border-border rounded-panel overflow-hidden border shadow-xs">
             {payoutBuckets.slice(0, 12).map((bucket) => (
-              <div key={bucket.key} className="flex items-center justify-between gap-4 px-4 py-3">
-                <div className="min-w-0">
-                  <p className="text-foreground truncate text-[12.5px] font-medium">{bucket.label}</p>
-                  <p className="text-muted text-[11px]">
-                    <span className="tnum">{bucket.count}</span>{" "}
-                    {bucket.count === 1 ? "payment" : "payments"}
-                    {bucket.reinvestedPaisa > 0 && (
-                      <>
-                        {" · "}
-                        <span className="tnum">{formatPKRCompact(bucket.reinvestedPaisa)}</span>{" "}
-                        reinvested
-                      </>
-                    )}
+              <div key={bucket.key} className="border-border border-b last:border-b-0">
+                <div className="bg-surface-subtle flex items-center justify-between gap-4 px-4 py-2">
+                  <p className="text-muted text-[11px] font-semibold uppercase tracking-widest">
+                    {bucket.label}
                   </p>
+                  <span
+                    className={`tnum shrink-0 text-[12px] font-semibold ${
+                      bucket.receivedPaisa > 0 ? "text-gain" : "text-muted"
+                    }`}
+                  >
+                    {bucket.receivedPaisa > 0 ? formatPKR(bucket.receivedPaisa) : "—"}
+                    {bucket.reinvestedPaisa > 0 && (
+                      <span className="text-muted font-normal">
+                        {" + "}
+                        {formatPKRCompact(bucket.reinvestedPaisa)} reinvested
+                      </span>
+                    )}
+                  </span>
                 </div>
-                <span
-                  className={`tnum font-display shrink-0 text-sm font-semibold ${
-                    bucket.receivedPaisa > 0 ? "text-gain" : "text-muted"
-                  }`}
-                >
-                  {bucket.receivedPaisa > 0 ? formatPKR(bucket.receivedPaisa) : "—"}
-                </span>
+
+                <ul className="divide-border divide-y">
+                  {bucket.payouts.map((payout) => {
+                    const holding = holdings.find((h) => h.id === payout.investment_id);
+                    return (
+                      <li
+                        key={payout.id}
+                        className="group hover:bg-surface-subtle/60 focus-within:bg-surface-subtle/60 flex items-center justify-between gap-3 px-4 py-2.5 transition-colors"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-foreground truncate text-[12.5px] font-medium">
+                            {holding?.name ?? "Deleted holding"}
+                          </p>
+                          <p className="text-faint text-[10.5px]">
+                            <span className="ltr">{payout.date}</span>
+                            {" · "}
+                            {payout.destination === "reinvested" ? "reinvested" : "received"}
+                            {payout.note && ` · ${payout.note}`}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span
+                            className={`tnum text-[12.5px] font-semibold ${
+                              payout.destination === "received" ? "text-gain" : "text-muted"
+                            }`}
+                          >
+                            {formatPKR(Number(payout.amount_paisa))}
+                          </span>
+                          {!readOnly && holding && (
+                            <RowActions
+                              onEdit={() => setPayingOut(holding)}
+                              onDelete={() => setDeletingPayout({ payout, holding })}
+                              editLabel="Edit this holding's profit"
+                              deleteLabel="Remove this payment"
+                              reveal="hover"
+                            />
+                          )}
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
               </div>
             ))}
           </div>
@@ -752,6 +871,43 @@ export default function InvestmentsPage() {
         history={valuing ? (valuationsByHolding[valuing.id] ?? []) : []}
       />
 
+      {/* Which holding paid? Only asked when there is more than one open. */}
+      <Modal
+        isOpen={pickingHolding}
+        onClose={() => setPickingHolding(false)}
+        title="Which holding paid?"
+        subtitle="Profit is recorded against the holding that produced it."
+        icon={<Banknote size={18} />}
+        footer={
+          <Button type="button" variant="ghost" onClick={() => setPickingHolding(false)}>
+            Cancel
+          </Button>
+        }
+      >
+        <ul className="border-border divide-border divide-y rounded-control border">
+          {openHoldings.map((h) => (
+            <li key={h.id}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPickingHolding(false);
+                  setPayingOut(h);
+                }}
+                className="hover:bg-surface-subtle flex w-full items-center justify-between gap-3 px-3 py-2.5 text-start transition-colors"
+              >
+                <div className="min-w-0">
+                  <p className="text-foreground truncate text-[12.5px] font-medium">{h.name}</p>
+                  <p className="text-muted text-[11px]">{investmentKind(h.kind).label}</p>
+                </div>
+                <span className="tnum text-foreground-2 shrink-0 text-[12px] font-semibold">
+                  {formatPKR(Number(h.current_value_paisa))}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </Modal>
+
       <PayoutModal
         isOpen={payingOut !== null}
         onClose={() => setPayingOut(null)}
@@ -777,6 +933,36 @@ export default function InvestmentsPage() {
         onSaved={refresh}
         holding={linking}
         accounts={accounts}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingPayout !== null}
+        onClose={() => setDeletingPayout(null)}
+        onConfirm={handleDeletePayout}
+        title="Remove this profit payment?"
+        recordLabel={
+          deletingPayout
+            ? `${formatPKR(Number(deletingPayout.payout.amount_paisa))} · ${deletingPayout.holding.name}`
+            : ""
+        }
+        recordMeta={
+          deletingPayout
+            ? `${deletingPayout.payout.date} · ${deletingPayout.payout.destination === "reinvested" ? "reinvested" : "received"}`
+            : undefined
+        }
+        linkedRefs={
+          deletingPayout?.payout.transaction_id
+            ? [{ kind: "Income entry", label: `Profit from ${deletingPayout.holding.name}` }]
+            : []
+        }
+        cascadeHint={
+          deletingPayout?.payout.destination === "reinvested"
+            ? "Recording this grew what the holding is worth, so removing it walks that value back down by the same amount. Leave it and the growth would stay behind with nothing backing it."
+            : deletingPayout?.payout.transaction_id
+              ? "The income entry this wrote is removed with it, so the account balance goes back to where it was."
+              : "This never reached an account, so no balance changes."
+        }
+        confirmLabel="Remove payment"
       />
 
       <ConfirmDeleteModal
@@ -1034,8 +1220,8 @@ function HoldingCard({
         <div className="mt-4 flex flex-wrap gap-1.5">
           {open ? (
             <>
+              <CardAction icon={Banknote} label="Record profit" onClick={onPayout} primary />
               <CardAction icon={Coins} label="Update value" onClick={onRevalue} />
-              <CardAction icon={Banknote} label="Profit" onClick={onPayout} />
               <CardAction icon={TrendingUp} label="Cash in" onClick={onClose} />
               {syncEnabled && !holding.funding_transaction_id && (
                 <CardAction icon={Link2} label="Link" onClick={onLink} />
@@ -1074,16 +1260,28 @@ function CardAction({
   icon: Icon,
   label,
   onClick,
+  primary = false,
 }: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
   label: string;
   onClick: () => void;
+  /**
+   * Recording profit is the action a holding exists FOR — it is the one you
+   * come back to every quarter, while "update value" and "cash in" are
+   * occasional. All four rendered identically, so the routine action was
+   * indistinguishable from the rare ones and read as a row of grey chips.
+   */
+  primary?: boolean;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
-      className="border-border bg-surface-subtle text-foreground-2 hover:border-brass/40 hover:text-foreground inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+      className={
+        primary
+          ? "border-brass/40 bg-brass/12 text-brass-strong hover:bg-brass/20 inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1.5 text-[11px] font-semibold transition-colors"
+          : "border-border bg-surface-subtle text-foreground-2 hover:border-brass/40 hover:text-foreground inline-flex items-center gap-1.5 rounded-control border px-2.5 py-1.5 text-[11px] font-medium transition-colors"
+      }
     >
       <Icon size={12} strokeWidth={1.9} />
       {label}

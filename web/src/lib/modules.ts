@@ -56,6 +56,7 @@ export const MODULES: ModuleDef[] = [
   { key: "investments", label: "Investments", href: "/wealth/investments", icon: "TrendingUp", group: "finance", status: "live", description: "NSS, prize bonds, gold, PSX" },
   { key: "committees", label: "Committee", href: "/wealth/committees", icon: "Users", group: "finance", status: "live", description: "BC circles and payout schedules" },
   { key: "zakat", label: "Zakat", href: "/wealth/zakat", icon: "HandHeart", group: "finance", status: "live", presets: ["personal", "family", "shop", "freelance", "factory", "rental"], description: "Nisab, hawl and payment log" },
+  { key: "debts", label: "Udhaar", href: "/debts", icon: "HandCoins", group: "finance", status: "live", description: "Money lent and money borrowed" },
   { key: "contacts", label: "Contacts", href: "/contacts", icon: "Contact", group: "finance", status: "live", description: "People, birthdays and who owes what" },
   { key: "reports", label: "Reports", href: "/reports", icon: "PieChart", group: "finance", status: "live", description: "Where the money actually went" },
   { key: "tax", label: "Tax & FBR", href: "/tax", icon: "Landmark", group: "finance", status: "live", description: "Slabs, filer status and withholding" },

@@ -12,7 +12,7 @@ interface EmptyStateProps {
 export function EmptyState({
   title,
   description,
-  imageSrc = "/art/store.png",
+  imageSrc = "/art/empty-shop.webp",
   action,
   className,
 }: EmptyStateProps) {
@@ -24,11 +24,23 @@ export function EmptyState({
       )}
     >
       {imageSrc && (
-        <div className="relative mb-4 size-32 overflow-hidden rounded-card">
+        /*
+          NO `mix-blend-multiply`, and that is the fix rather than a tidy-up.
+          The blend existed to knock the white background out of the one opaque
+          PNG this component used to show. Every illustration is now a real
+          transparent WebP, and multiplying one of those against the page muddies
+          every mid-tone and softens the edges — which is exactly the "high
+          quality but looks slightly blurry at 100%" effect. Compositing it
+          normally is both correct and sharper.
+
+          `object-contain`, not `cover`: the art is square and already trimmed to
+          its subject, so `cover` could only ever crop it.
+        */
+        <div className="relative mb-4 size-40">
           <img
             src={imageSrc}
-            alt={title}
-            className="size-full object-cover rounded-card mix-blend-multiply dark:mix-blend-normal"
+            alt=""
+            className="size-full object-contain"
           />
         </div>
       )}

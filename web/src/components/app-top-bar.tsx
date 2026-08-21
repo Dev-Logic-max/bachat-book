@@ -1,8 +1,9 @@
 "use client";
 
-import { Bell } from "lucide-react";
+import { Bell, PanelLeftClose, PanelLeftOpen } from "lucide-react";
 import { UserMenu } from "@/components/user-menu";
 import { WorkspaceSwitcher } from "@/components/workspace-switcher";
+import { useRailCollapsed } from "@/lib/rail-state";
 
 /**
  * The one row that is on every screen at every width.
@@ -19,6 +20,8 @@ import { WorkspaceSwitcher } from "@/components/workspace-switcher";
  * not a mistake you notice quickly.
  */
 export function AppTopBar() {
+  const [collapsed, setCollapsed] = useRailCollapsed();
+
   return (
     /*
      * A CONSTANT 64px band, flush to the top, ruled off by a hairline.
@@ -45,7 +48,31 @@ export function AppTopBar() {
         while the RULE stays full-bleed and reads as the edge of the chrome.
       */}
       <div className="mx-auto flex h-16 w-full max-w-[1600px] items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-        <WorkspaceSwitcher />
+        <div className="flex min-w-0 items-center gap-2">
+          {/*
+            The sidebar toggle, at the left end of the header.
+
+            `hidden lg:flex` because the rail only exists at `lg` and up — below
+            that the bottom-nav island is the navigation, and a control that
+            collapsed something not on screen would do nothing visible.
+          */}
+          <button
+            type="button"
+            onClick={() => setCollapsed(!collapsed)}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            aria-pressed={collapsed}
+            className="border-border bg-surface text-foreground-2 hover:text-foreground hover:border-brass/40 hidden size-9 shrink-0 items-center justify-center rounded-full border transition-colors lg:flex"
+          >
+            {collapsed ? (
+              <PanelLeftOpen size={16} strokeWidth={1.75} />
+            ) : (
+              <PanelLeftClose size={16} strokeWidth={1.75} />
+            )}
+          </button>
+
+          <WorkspaceSwitcher />
+        </div>
 
         <div className="flex shrink-0 items-center gap-2">
           {/*

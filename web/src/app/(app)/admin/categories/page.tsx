@@ -321,7 +321,7 @@ export default function AdminCategoriesPage() {
           <div className="relative lg:w-72">
             <Search
               size={14}
-              className="text-muted pointer-events-none absolute start-3 top-1/2 -translate-y-1/2"
+              className="text-muted pointer-events-none absolute inset-s-3 top-1/2 -translate-y-1/2"
             />
             <Input
               placeholder="Search name or key…"

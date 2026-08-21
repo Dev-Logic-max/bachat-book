@@ -141,8 +141,14 @@ export type ContactSummary = {
   receivedPaisa: number;
   /**
    * received − paid. Positive means they have given you more than you gave
-   * them. This is NOT a debt: it is the net of recorded movements, and lending
-   * is not modelled yet. The UI must not label it "owes".
+   * them.
+   *
+   * This is STILL NOT a debt, even now that udhaar exists. It is the net of
+   * ordinary recorded movements — what you paid the plumber against what he
+   * paid you — and transfers are excluded from it, which is exactly what every
+   * lending row is. What somebody actually owes comes from `lib/debts.ts`
+   * (`contactBalancePaisa`) and is shown separately. The UI must never label
+   * this one "owes".
    */
   netPaisa: number;
   count: number;

@@ -51,6 +51,39 @@ export type EventBudgetKind =
   | "shaadi"
   | "school"
   | "custom";
+/**
+ * Which way a committee payment moves.
+ *
+ * `contribution` is money going INTO the pool — mine is a real expense.
+ * `payout` is the pool coming to me, and only ever sits on my own member row.
+ */
+export type CommitteePaymentKind = "contribution" | "payout";
+
+/* -------------------------------------------------------------------------- *
+ * Debts / udhaar — mirrors debts_direction_check and friends.
+ * -------------------------------------------------------------------------- */
+
+/**
+ * Which way the money is owed. Read this, never the sign of anything: the
+ * ledger rows behind a debt are TRANSFERS, and a transfer's sign says which
+ * account moved, not who owes whom.
+ */
+export type DebtDirection = "owed_to_us" | "owed_by_us";
+
+/**
+ * What kind of arrangement it is. `qarz` is the interest-free personal loan
+ * between family and friends that most Pakistani households actually run;
+ * `khata` is the shop's running customer tab; `loan` is a formal one with a
+ * due date. Behaviour is identical — this only changes the wording on screen.
+ */
+export type DebtKind = "qarz" | "loan" | "khata";
+
+/**
+ * `written_off` keeps every row. It is a status and never a delete, because the
+ * money genuinely left and last year's totals must not silently change.
+ */
+export type DebtStatus = "open" | "settled" | "written_off";
+
 /* -------------------------------------------------------------------------- *
  * Investments — mirrors investments_kind_check and friends.
  * -------------------------------------------------------------------------- */
@@ -564,6 +597,75 @@ export type Database = {
         Update: Partial<Database["public"]["Tables"]["committees"]["Insert"]>;
         Relationships: [];
       };
+      committee_members: {
+        Row: {
+          id: string;
+          household_id: string;
+          committee_id: string;
+          /** Optional link to the person. Cleared if the contact is deleted. */
+          contact_id: string | null;
+          /** Denormalised, so deleting a contact never erases who was in the BC. */
+          member_name: string;
+          /** Which turn is theirs. NULL = the draw has not happened yet. */
+          payout_month: number | null;
+          /**
+           * Exactly one row per committee may be me — a partial unique index
+           * enforces it, because two "me"s would double every ledger figure.
+           */
+          is_me: boolean;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          committee_id: string;
+          contact_id?: string | null;
+          member_name: string;
+          payout_month?: number | null;
+          is_me?: boolean;
+          note?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["committee_members"]["Insert"]>;
+        Relationships: [];
+      };
+      committee_payments: {
+        Row: {
+          id: string;
+          household_id: string;
+          committee_id: string;
+          member_id: string;
+          /** 1..total_members — which round of the committee this is for. */
+          month_index: number;
+          /** UNSIGNED. Direction is implied by `kind`. */
+          amount_paisa: number;
+          paid_on: string;
+          kind: CommitteePaymentKind;
+          /**
+           * The ledger row this wrote. NULL for another member's instalment —
+           * their money never moves through my accounts.
+           */
+          transaction_id: string | null;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          committee_id: string;
+          member_id: string;
+          month_index: number;
+          amount_paisa: number;
+          paid_on?: string;
+          kind?: CommitteePaymentKind;
+          transaction_id?: string | null;
+          note?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["committee_payments"]["Insert"]>;
+        Relationships: [];
+      };
       zakat_records: {
         Row: {
           id: string;
@@ -922,6 +1024,94 @@ export type Database = {
           created_at?: string;
         };
         Update: Partial<Database["public"]["Tables"]["contacts"]["Insert"]>;
+        Relationships: [];
+      };
+      debts: {
+        Row: {
+          id: string;
+          household_id: string;
+          /**
+           * Optional link to the person. Cleared if the contact is deleted —
+           * which is exactly why `counterparty_name` exists beside it.
+           */
+          contact_id: string | null;
+          /**
+           * Denormalised ON PURPOSE. Deleting a contact must never erase the
+           * record of who owed you money.
+           */
+          counterparty_name: string;
+          direction: DebtDirection;
+          kind: DebtKind;
+          /**
+           * UNSIGNED, and always the ORIGINAL amount. What is still outstanding
+           * is DERIVED (`principal − sum(payments)`) and never stored — a stored
+           * balance and a payment list disagree the first time a payment is
+           * edited, and then there are two numbers and no way to tell which is
+           * right. Use `outstandingPaisa()` in lib/debts.ts.
+           */
+          principal_paisa: number;
+          due_date: string | null;
+          status: DebtStatus;
+          /**
+           * The one-legged transfer that moved the money when the debt opened.
+           * Null means the debt was recorded without touching an account —
+           * money that changed hands before the app existed.
+           */
+          opening_transaction_id: string | null;
+          note: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          contact_id?: string | null;
+          counterparty_name: string;
+          direction: DebtDirection;
+          kind?: DebtKind;
+          principal_paisa: number;
+          due_date?: string | null;
+          status?: DebtStatus;
+          opening_transaction_id?: string | null;
+          note?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["debts"]["Insert"]>;
+        Relationships: [];
+      };
+      debt_payments: {
+        Row: {
+          id: string;
+          /**
+           * Carried here as well as on the parent so the link to the ledger can
+           * be tenant-scoped. Without it `transaction_id` could point at another
+           * household's row.
+           */
+          household_id: string;
+          debt_id: string;
+          /**
+           * UNSIGNED. Direction lives on the parent debt, exactly as a subtask
+           * price carries no direction of its own.
+           */
+          amount_paisa: number;
+          date: string;
+          /** The transfer this repayment wrote. Null if it never touched an account. */
+          transaction_id: string | null;
+          note: string | null;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          household_id: string;
+          debt_id: string;
+          amount_paisa: number;
+          date?: string;
+          transaction_id?: string | null;
+          note?: string | null;
+          created_at?: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["debt_payments"]["Insert"]>;
         Relationships: [];
       };
       calendar_connections: {

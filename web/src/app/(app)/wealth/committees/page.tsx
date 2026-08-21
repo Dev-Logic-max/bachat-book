@@ -1,10 +1,25 @@
 "use client";
 
 import * as React from "react";
-import { Users, Plus, Calendar, CheckCircle2, Circle, Trash2, ShieldCheck } from "lucide-react";
+import { Grid3x3, Plus } from "lucide-react";
+import type { AccountWithInstitution } from "@/components/account-options";
+import { CommitteeGridModal } from "@/components/committee-grid-modal";
+import { CommitteeMemberModal, CommitteePaymentModal } from "@/components/committee-modals";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
+import { ConfirmDeleteModal } from "@/components/confirm-delete-modal";
+import { EmptyState } from "@/components/empty-state";
 import { PageActions } from "@/components/page-actions";
+import { RowActions } from "@/components/ui/row-actions";
+import type { Contact } from "@/lib/contacts";
+import {
+  committeeTotals,
+  myMember,
+  type CommitteeFull,
+  type CommitteeMember,
+  type CommitteePayment,
+} from "@/lib/committees";
+import { deleteCommittee, deleteCommitteePayment, deleteMember } from "@/lib/committee-actions";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Modal } from "@/components/ui/modal";
@@ -13,6 +28,46 @@ import { createClient } from "@/lib/supabase/client";
 import { formatPKR } from "@/lib/format";
 import type { Tables } from "@/lib/supabase/types";
 
+/**
+ * Is your turn early, late, or in the middle?
+ *
+ * A BC is two different products wearing one name. Take the pool in month 2 of
+ * 10 and you have BORROWED: you hold the whole amount having paid in a fifth of
+ * it, and the remaining instalments are the repayment. Take it in month 10 and
+ * you have SAVED: you funded everyone else's turn first and got your own money
+ * back at the end.
+ *
+ * Stated as a third of the length rather than a fixed month, because "month 3"
+ * means opposite things in a 4-person and a 20-person committee.
+ */
+function payoutVerdict(committee: Tables<"committees">): {
+  tone: "borrow" | "save" | "even";
+  label: string;
+} {
+  const total = Math.max(1, committee.total_members);
+  const position = committee.my_payout_month / total;
+
+  if (position <= 1 / 3) {
+    return {
+      tone: "borrow",
+      label:
+        "Your turn comes early — this behaves like borrowing. You receive the pool long before you have paid it in, and the rest of the instalments are the repayment.",
+    };
+  }
+  if (position >= 2 / 3) {
+    return {
+      tone: "save",
+      label:
+        "Your turn comes late — this behaves like saving. You fund everyone else first and take your own money back at the end, so treat it as a savings plan, not a windfall.",
+    };
+  }
+  return {
+    tone: "even",
+    label:
+      "Your turn falls mid-way, so this is close to break-even — roughly what you put in is what you take out, at about the time you have put it in.",
+  };
+}
+
 export default function CommitteesPage() {
   const session = useSession();
   const supabase = createClient();
@@ -20,9 +75,36 @@ export default function CommitteesPage() {
 
   const householdId = session.household?.id || "";
 
+  const readOnly = session.workspace ? !session.workspace.is_active : false;
+
   const [committees, setCommittees] = React.useState<Tables<"committees">[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [loadError, setLoadError] = React.useState<string | null>(null);
   const [addModalOpen, setAddModalOpen] = React.useState(false);
+  const [refreshKey, setRefreshKey] = React.useState(0);
+  const [editing, setEditing] = React.useState<Tables<"committees"> | null>(null);
+  const [deleting, setDeleting] = React.useState<Tables<"committees"> | null>(null);
+
+  const [members, setMembers] = React.useState<CommitteeMember[]>([]);
+  const [payments, setPayments] = React.useState<CommitteePayment[]>([]);
+  const [contacts, setContacts] = React.useState<Contact[]>([]);
+  const [accounts, setAccounts] = React.useState<AccountWithInstitution[]>([]);
+
+  /** Which committee's grid is open. */
+  const [gridFor, setGridFor] = React.useState<string | null>(null);
+  const [memberModal, setMemberModal] = React.useState<{
+    committee: Tables<"committees">;
+    member: CommitteeMember | null;
+  } | null>(null);
+  const [deletingMember, setDeletingMember] = React.useState<CommitteeMember | null>(null);
+  const [cellModal, setCellModal] = React.useState<{
+    committee: Tables<"committees">;
+    member: CommitteeMember;
+    monthIndex: number;
+    payment: CommitteePayment | null;
+    kind: "contribution" | "payout";
+  } | null>(null);
+  const [deletingPayment, setDeletingPayment] = React.useState<CommitteePayment | null>(null);
 
   const [name, setName] = React.useState("");
   const [totalMembers, setTotalMembers] = React.useState("10");
@@ -32,27 +114,78 @@ export default function CommitteesPage() {
   const [notes, setNotes] = React.useState("");
   const [submitting, setSubmitting] = React.useState(false);
 
+  // Re-seed the form per opening. Done in render, not an effect — React
+  // Compiler rejects a synchronous setState inside useEffect.
+  const seedKey = `${addModalOpen || editing !== null}:${editing?.id ?? "new"}`;
+  const [seeded, setSeeded] = React.useState(seedKey);
+  if (seeded !== seedKey) {
+    setSeeded(seedKey);
+    setName(editing?.name ?? "");
+    setTotalMembers(String(editing?.total_members ?? 10));
+    setMonthlyContribution(
+      editing ? String(Number(editing.monthly_contribution_paisa) / 100) : "50000",
+    );
+    setStartDate(editing?.start_date ?? new Date().toISOString().split("T")[0]);
+    setMyPayoutMonth(String(editing?.my_payout_month ?? 6));
+    setNotes(editing?.notes ?? "");
+  }
+
   React.useEffect(() => {
     let active = true;
     if (!householdId) return;
 
     async function loadCommittees() {
-      const { data } = await supabase
-        .from("committees")
-        .select("*")
-        .eq("household_id", householdId);
+      const [
+        { data, error },
+        memberRes,
+        paymentRes,
+        contactRes,
+        accountRes,
+      ] = await Promise.all([
+        supabase
+          .from("committees")
+          .select("*")
+          .eq("household_id", householdId)
+          .order("start_date", { ascending: false }),
+        supabase.from("committee_members").select("*").eq("household_id", householdId),
+        supabase.from("committee_payments").select("*").eq("household_id", householdId),
+        supabase.from("contacts").select("*").eq("household_id", householdId).order("name"),
+        supabase
+          .from("accounts")
+          .select("*, institutions(*)")
+          .eq("household_id", householdId)
+          .is("deleted_at", null)
+          .eq("is_archived", false)
+          .order("name"),
+      ]);
 
-      if (active && data) {
-        setCommittees(data);
+      if (!active) return;
+
+      setMembers(memberRes.data ?? []);
+      setPayments(paymentRes.data ?? []);
+      setContacts(contactRes.data ?? []);
+      setAccounts((accountRes.data ?? []) as unknown as AccountWithInstitution[]);
+
+      // `error` is surfaced SEPARATELY from "no rows". The old version checked
+      // only `data`, so a real failure left the page on its loading text
+      // forever with nothing said — the same shape of bug that made the
+      // Transactions page show an empty state for every household.
+      if (error) {
+        setLoadError(error.message);
         setLoading(false);
+        return;
       }
+
+      setCommittees(data ?? []);
+      setLoadError(null);
+      setLoading(false);
     }
 
     loadCommittees();
     return () => {
       active = false;
     };
-  }, [householdId, supabase]);
+  }, [householdId, supabase, refreshKey]);
 
   const handleAddCommittee = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +197,7 @@ export default function CommitteesPage() {
     setSubmitting(true);
     const contributionPaisa = Math.round(parseFloat(monthlyContribution) * 100);
 
-    const { error } = await supabase.from("committees").insert({
+    const payload = {
       household_id: householdId,
       name: name.trim(),
       total_members: parseInt(totalMembers) || 10,
@@ -72,21 +205,110 @@ export default function CommitteesPage() {
       start_date: startDate,
       my_payout_month: parseInt(myPayoutMonth) || 1,
       notes: notes.trim() || null,
-    });
+    };
+
+    const { error } = editing
+      ? await supabase.from("committees").update(payload).eq("id", editing.id)
+      : await supabase.from("committees").insert(payload);
 
     setSubmitting(false);
 
     if (error) {
-      showToast({ type: "error", title: "Add Failed", description: error.message });
+      showToast({
+        type: "error",
+        title: editing ? "Could not save" : "Could not create it",
+        description: error.message,
+      });
       return;
     }
 
-    showToast({ type: "success", title: "Committee Created", description: `"${name}" added.` });
+    showToast({
+      type: "success",
+      title: editing ? "Committee updated" : "Committee created",
+      description: `"${name.trim()}" saved.`,
+    });
     setName("");
     setAddModalOpen(false);
+    setEditing(null);
 
-    const { data } = await supabase.from("committees").select("*").eq("household_id", householdId);
-    if (data) setCommittees(data);
+    refresh();
+  };
+
+  const refresh = () => setRefreshKey((k) => k + 1);
+
+  /** The committee whose grid is open, with its members and payments attached. */
+  const openGrid: CommitteeFull | null = React.useMemo(() => {
+    const committee = committees.find((c) => c.id === gridFor);
+    if (!committee) return null;
+    return {
+      ...committee,
+      members: members.filter((m) => m.committee_id === committee.id),
+      payments: payments.filter((p) => p.committee_id === committee.id),
+    };
+  }, [committees, gridFor, members, payments]);
+
+  const handleDelete = async (cascade: boolean) => {
+    if (!deleting) return;
+    try {
+      await deleteCommittee(supabase, deleting, cascade);
+      showToast({
+        type: "success",
+        title: "Committee removed",
+        description: cascade
+          ? "Its members, the grid and the account entries it wrote went with it."
+          : "Its members and grid are gone; the account entries stay.",
+      });
+      setDeleting(null);
+      refresh();
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Could not remove it",
+        description: error instanceof Error ? error.message : "Something went wrong.",
+      });
+    }
+  };
+
+  const handleDeleteMember = async () => {
+    if (!deletingMember) return;
+    try {
+      await deleteMember(supabase, deletingMember, true);
+      showToast({
+        type: "success",
+        title: "Member removed",
+        description: `${deletingMember.member_name} and their squares are gone.`,
+      });
+      setDeletingMember(null);
+      refresh();
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Could not remove them",
+        description: error instanceof Error ? error.message : "Something went wrong.",
+      });
+    }
+  };
+
+  const handleDeletePayment = async () => {
+    if (!deletingPayment) return;
+    try {
+      await deleteCommitteePayment(supabase, deletingPayment);
+      showToast({
+        type: "success",
+        title: "Payment removed",
+        description: deletingPayment.transaction_id
+          ? "The account entry it wrote went with it."
+          : "It never touched an account, so no balance changed.",
+      });
+      setDeletingPayment(null);
+      refresh();
+    } catch (error) {
+      showToast({
+        type: "error",
+        title: "Could not remove it",
+        description: error instanceof Error ? error.message : "Something went wrong.",
+      });
+    }
   };
 
   const handleTogglePayout = async (committee: Tables<"committees">) => {
@@ -127,60 +349,143 @@ export default function CommitteesPage() {
         />
       </div>
 
+      {loadError && (
+        <div className="border-loss/25 bg-loss/8 text-loss rounded-panel border px-4 py-3 text-[12.5px]">
+          Could not load your committees: {loadError}
+        </div>
+      )}
+
       {loading ? (
-        <div className="bg-surface border-border rounded-panel border p-8 text-center text-muted text-xs">
-          Loading committees...
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="bg-surface border-border rounded-panel shimmer h-56 border" />
+          ))}
         </div>
       ) : committees.length === 0 ? (
-        <div className="bg-surface border-border rounded-panel border p-12 text-center">
-          <Users size={40} className="text-muted mx-auto mb-3" />
-          <h3 className="font-display text-base font-semibold">No Active Committees</h3>
-          <p className="text-muted text-xs mt-1 max-w-sm mx-auto">
-            Create a Bachat Committee pool to track your monthly contributions & payout month.
-          </p>
-          <Button variant="primary" onClick={() => setAddModalOpen(true)} className="mt-4">
-            + Create First Committee
-          </Button>
-        </div>
+        <EmptyState
+          title="No committees yet"
+          imageSrc="/art/empty-committee.webp"
+          description="Track a BC pool — who runs it, what you pay each month, and which month your turn lands. The app works out whether your draw was worth taking."
+          action={
+            <Button variant="primary" onClick={() => setAddModalOpen(true)}>
+              Create your first committee
+            </Button>
+          }
+        />
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {committees.map((committee) => {
             const totalPoolPaisa = committee.monthly_contribution_paisa * committee.total_members;
+            const verdict = payoutVerdict(committee);
+
+            const own = members.filter((m) => m.committee_id === committee.id);
+            const memberCount = own.length;
+            const myPaid = committeeTotals({
+              ...committee,
+              members: own,
+              payments: payments.filter((p) => p.committee_id === committee.id),
+            }).myPaidCount;
 
             return (
-              <div key={committee.id} className="bg-surface border border-border rounded-panel p-5 shadow-sm space-y-4 flex flex-col justify-between">
+              // `group` drives the hover reveal in RowActions, exactly as on the
+              // budget, holding and udhaar cards.
+              <div
+                key={committee.id}
+                className="group bg-surface border-border rounded-panel focus-within:border-brass/40 flex h-full flex-col justify-between border p-5 shadow-xs transition-colors"
+              >
                 <div>
-                  <div className="flex items-center justify-between gap-2 border-b border-border pb-3">
-                    <h3 className="font-display text-base font-bold text-foreground">{committee.name}</h3>
-                    <button
-                      type="button"
-                      onClick={() => handleTogglePayout(committee)}
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded-full border transition-colors ${
-                        committee.payout_received
-                          ? "bg-gain-subtle text-gain border-gain/20"
-                          : "bg-brass/10 text-brass-strong border-brass/20"
-                      }`}
-                    >
-                      {committee.payout_received ? "Payout Received" : "Payout Pending"}
-                    </button>
+                  <div className="border-border flex items-start justify-between gap-2 border-b pb-3">
+                    <div className="min-w-0">
+                      <h3 className="font-display text-foreground truncate text-[13.5px] font-semibold">
+                        {committee.name}
+                      </h3>
+                      <p className="text-muted text-[11px]">
+                        <span className="tnum">{committee.total_members}</span> members ·
+                        starts <span className="ltr">{committee.start_date}</span>
+                      </p>
+                    </div>
+
+                    {!readOnly && (
+                      <RowActions
+                        onEdit={() => setEditing(committee)}
+                        onDelete={() => setDeleting(committee)}
+                        editLabel="Edit committee"
+                        deleteLabel="Remove committee"
+                        reveal="hover"
+                      />
+                    )}
                   </div>
 
-                  <div className="mt-3 space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-muted">Total Pool Amount:</span>
-                      <span className="font-display font-bold text-foreground">{formatPKR(totalPoolPaisa)}</span>
+                  <div className="mt-3 space-y-2 text-[11.5px]">
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted">Total pool</span>
+                      <span className="font-display tnum text-foreground font-bold">
+                        {formatPKR(totalPoolPaisa)}
+                      </span>
                     </div>
 
-                    <div className="flex justify-between">
-                      <span className="text-muted">My Monthly Installment:</span>
-                      <span className="font-mono text-foreground font-semibold">{formatPKR(committee.monthly_contribution_paisa)}</span>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted">My instalment</span>
+                      <span className="tnum text-foreground font-semibold">
+                        {formatPKR(committee.monthly_contribution_paisa)}
+                      </span>
                     </div>
 
-                    <div className="flex justify-between">
-                      <span className="text-muted">Draw Month:</span>
-                      <span className="font-semibold text-brass">Month #{committee.my_payout_month} of {committee.total_members}</span>
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted">My turn</span>
+                      <span className="text-brass-strong font-semibold">
+                        Month <span className="tnum">{committee.my_payout_month}</span> of{" "}
+                        <span className="tnum">{committee.total_members}</span>
+                      </span>
                     </div>
                   </div>
+
+                  {/*
+                    The line that makes a BC legible.
+
+                    Taking month 2 of 10 is BORROWING — you receive the pool long
+                    before you have paid it in. Taking month 10 is SAVING. Same
+                    committee, same instalment, opposite financial product, and
+                    nothing on the old card said which one you had agreed to.
+                  */}
+                  <p
+                    className={`mt-3 rounded-control border px-2.5 py-2 text-[11px] leading-snug ${
+                      verdict.tone === "borrow"
+                        ? "border-brass/30 bg-brass/8 text-brass-strong"
+                        : verdict.tone === "save"
+                          ? "border-gain/25 bg-gain/8 text-gain"
+                          : "border-border bg-surface-subtle text-muted"
+                    }`}
+                  >
+                    {verdict.label}
+                  </p>
+                </div>
+
+                {/*
+                  The grid is where the module actually lives. The card is a
+                  summary; who has paid for which round is a table, and a table
+                  does not fit in a card.
+                */}
+                <div className="mt-4 space-y-2">
+                  <div className="text-muted flex items-center justify-between gap-2 text-[11px]">
+                    <span>
+                      <span className="tnum">{memberCount}</span>{" "}
+                      {memberCount === 1 ? "member" : "members"} added
+                    </span>
+                    <span className="tnum">
+                      {myPaid} of {committee.total_members} paid by me
+                    </span>
+                  </div>
+
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    className="w-full"
+                    onClick={() => setGridFor(committee.id)}
+                  >
+                    <Grid3x3 size={13} />
+                    {memberCount === 0 ? "Add members" : "Open payment grid"}
+                  </Button>
                 </div>
               </div>
             );
@@ -190,17 +495,27 @@ export default function CommitteesPage() {
 
       {/* Add Committee Modal */}
       <Modal
-        isOpen={addModalOpen}
-        onClose={() => setAddModalOpen(false)}
-        title="Create Bachat Committee (BC)"
+        isOpen={addModalOpen || editing !== null}
+        onClose={() => {
+          setAddModalOpen(false);
+          setEditing(null);
+        }}
+        title={editing ? "Edit committee" : "Create Bachat Committee (BC)"}
         onSubmit={handleAddCommittee}
         footer={
           <>
-            <Button type="button" variant="ghost" onClick={() => setAddModalOpen(false)}>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setAddModalOpen(false);
+                setEditing(null);
+              }}
+            >
               Cancel
             </Button>
             <Button type="submit" variant="primary" isLoading={submitting}>
-              Save Committee
+              {editing ? "Save changes" : "Save Committee"}
             </Button>
           </>
         }
@@ -258,6 +573,143 @@ export default function CommitteesPage() {
 
         </div>
       </Modal>
+
+      <CommitteeGridModal
+        isOpen={gridFor !== null}
+        onClose={() => setGridFor(null)}
+        committee={openGrid}
+        readOnly={readOnly}
+        onAddMember={() => {
+          if (openGrid) setMemberModal({ committee: openGrid, member: null });
+        }}
+        onEditMember={(member) => {
+          if (openGrid) setMemberModal({ committee: openGrid, member });
+        }}
+        onDeleteMember={setDeletingMember}
+        onCell={(member, monthIndex) => {
+          if (openGrid) {
+            setCellModal({
+              committee: openGrid,
+              member,
+              monthIndex,
+              payment: null,
+              kind: "contribution",
+            });
+          }
+        }}
+        onEditPayment={(member, payment) => {
+          if (openGrid) {
+            setCellModal({
+              committee: openGrid,
+              member,
+              monthIndex: payment.month_index,
+              payment,
+              kind: payment.kind,
+            });
+          }
+        }}
+        onRecordPayout={() => {
+          const me = openGrid ? myMember(openGrid.members) : null;
+          if (openGrid && me) {
+            setCellModal({
+              committee: openGrid,
+              member: me,
+              monthIndex: me.payout_month ?? openGrid.my_payout_month,
+              payment: null,
+              kind: "payout",
+            });
+          }
+        }}
+      />
+
+      <CommitteeMemberModal
+        isOpen={memberModal !== null}
+        onClose={() => setMemberModal(null)}
+        onSaved={refresh}
+        committee={memberModal?.committee ?? null}
+        member={memberModal?.member ?? null}
+        contacts={contacts}
+        takenMonths={
+          memberModal
+            ? members
+                .filter(
+                  (m) =>
+                    m.committee_id === memberModal.committee.id &&
+                    m.id !== memberModal.member?.id &&
+                    m.payout_month !== null,
+                )
+                .map((m) => m.payout_month as number)
+                .sort((a, b) => a - b)
+            : []
+        }
+      />
+
+      <CommitteePaymentModal
+        isOpen={cellModal !== null}
+        onClose={() => setCellModal(null)}
+        onSaved={refresh}
+        committee={cellModal?.committee ?? null}
+        member={cellModal?.member ?? null}
+        monthIndex={cellModal?.monthIndex ?? 1}
+        payment={cellModal?.payment ?? null}
+        kind={cellModal?.kind ?? "contribution"}
+        accounts={accounts}
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingMember !== null}
+        onClose={() => setDeletingMember(null)}
+        onConfirm={handleDeleteMember}
+        title="Remove this member?"
+        recordLabel={deletingMember?.member_name ?? ""}
+        recordMeta={
+          deletingMember?.payout_month ? `Turn ${deletingMember.payout_month}` : undefined
+        }
+        cascadeHint={
+          deletingMember?.is_me
+            ? "This is YOUR row, so every instalment recorded on it — and the account entries they wrote — goes too, and those balances return to where they were."
+            : "Their squares on the grid go with them. Nothing in your accounts changes, because their instalments never touched your accounts."
+        }
+        confirmLabel="Remove member"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deletingPayment !== null}
+        onClose={() => setDeletingPayment(null)}
+        onConfirm={handleDeletePayment}
+        title="Remove this payment?"
+        recordLabel={
+          deletingPayment ? formatPKR(Number(deletingPayment.amount_paisa)) : ""
+        }
+        recordMeta={deletingPayment?.paid_on}
+        linkedRefs={
+          deletingPayment?.transaction_id
+            ? [{ kind: "Account entry", label: "The entry this payment wrote" }]
+            : []
+        }
+        cascadeHint={
+          deletingPayment?.transaction_id
+            ? "The account entry this wrote is removed with it, so the balance goes back to where it was."
+            : "This never touched an account, so no balance changes."
+        }
+        confirmLabel="Remove payment"
+      />
+
+      <ConfirmDeleteModal
+        isOpen={deleting !== null}
+        onClose={() => setDeleting(null)}
+        onConfirm={handleDelete}
+        title="Remove this committee?"
+        recordLabel={deleting?.name ?? ""}
+        recordMeta={
+          deleting
+            ? `${formatPKR(Number(deleting.monthly_contribution_paisa))} a month · ${deleting.total_members} members`
+            : undefined
+        }
+        cascadeLabel="Also delete the account entries this created"
+        cascadeHint="Checked — the default — every instalment and payout of yours is removed from your accounts and the balances go back. Unchecked, the grid goes but those entries stay, because the money really did leave."
+        confirmLabel="Remove committee"
+      />
     </div>
   );
 }

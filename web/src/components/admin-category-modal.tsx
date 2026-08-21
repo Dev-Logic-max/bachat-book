@@ -43,7 +43,7 @@ const ICON_CHOICES = [
   "BookOpen", "NotebookPen", "Users", "Baby", "PawPrint", "Scissors",
   "Dumbbell", "Sparkles", "Tv", "Gamepad2", "Plane", "Hotel",
   "Moon", "PartyPopper", "HandHeart", "HandCoins", "Landmark", "Percent",
-  "CreditCard", "Briefcase", "Store", "Laptop", "TrendingUp", "PiggyBank",
+  "CreditCard", "Briefcase", "Store", "Laptop", "TrendingUp", "Vault",
   "Banknote", "Wallet", "ReceiptText", "FileText", "Globe", "Wheat",
 ];
 

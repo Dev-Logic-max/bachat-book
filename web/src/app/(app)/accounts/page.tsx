@@ -384,18 +384,41 @@ function AccountCard({
 }) {
   const inst = account.institutions;
 
+  /*
+    The card is tinted by the INSTITUTION's own brand colour, the same shape as
+    the category cards: a gradient that is strongest at the top and gone by the
+    middle, so it reads as light falling on the card rather than as a coloured
+    panel. `color-mix` against `transparent` composites over whatever surface it
+    lands on, which is what keeps it working in dark mode — a baked-in tint
+    would glow there.
+
+    7% is deliberately faint. A wall of accounts at full brand strength becomes
+    a colour chart, and the balance is what the eye should land on.
+
+    Cash has no institution and so no brand colour, but it still gets the
+    treatment — in the same neutral navy `MerchantMark` already falls back to.
+    Leaving it flat would make the one account every household has the only
+    card on the page that looks unfinished.
+  */
+  const tint = inst?.brand_color ?? "#16233a";
+
   return (
     // `group` drives the hover reveal in RowActions. Card surfaces reveal on hover
     // and :focus-within; detail pages show the actions always.
     <div
       className={cn(
-        "group lift bg-surface border-border rounded-panel border p-5 shadow-sm flex flex-col justify-between",
+        "group lift bg-surface border-border rounded-panel border shadow-sm flex flex-col justify-between overflow-hidden",
         // Deactivated reads as switched off rather than missing.
         account.is_archived && "opacity-60",
       )}
     >
       <div>
-        <div className="flex items-center justify-between gap-3 mb-3">
+        <div
+          className="flex items-center justify-between gap-3 px-5 pb-3 pt-5"
+          style={{
+            background: `linear-gradient(to bottom, color-mix(in oklab, ${tint} 7%, transparent), transparent)`,
+          }}
+        >
           <div className="flex items-center gap-2.5">
             {/*
               MerchantMark, not a bare <img>: `logo_path` is a bare filename for
@@ -454,7 +477,7 @@ function AccountCard({
           </div>
         </div>
 
-        <div className="mt-4">
+        <div className="px-5 pt-1">
           <span className="text-muted text-[10px] uppercase tracking-wider block">
             {account.is_locked ? "Locked Balance" : "Available Balance"}
           </span>
@@ -464,7 +487,7 @@ function AccountCard({
         </div>
       </div>
 
-      <div className="mt-5 pt-3 border-t border-border flex items-center justify-between">
+      <div className="mt-5 mx-5 mb-5 pt-3 border-t border-border flex items-center justify-between">
         <Link
           href={`/accounts/${account.id}`}
           className="text-brass hover:text-brass-strong text-xs font-semibold flex items-center gap-1 transition-colors"

@@ -140,12 +140,18 @@ export default function WelcomePage() {
 
       <div className="bg-surface border-border rounded-panel border p-6 shadow-xl sm:p-8">
         <div className="flex flex-col items-center text-center">
-          <div className="relative mb-4 size-32 overflow-hidden rounded-card">
+          {/*
+            The transparent WebP, not the 5.2 MB PNG this used to load for a
+            128px box. `mix-blend-multiply` went with it: it was only ever there
+            to knock the white background out of an opaque render, and applied
+            to a real cut-out it muddies every mid-tone.
+          */}
+          <div className="relative mb-4 size-36">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/art/store.png"
+              src="/art/empty-shop.webp"
               alt=""
-              className="size-full rounded-card object-cover mix-blend-multiply dark:mix-blend-normal"
+              className="size-full object-contain"
             />
           </div>
 

@@ -42,6 +42,7 @@ import {
   type Contact,
   type ContactMovement,
 } from "@/lib/contacts";
+import { contactBalancePaisa, withPayments, type DebtWithPayments } from "@/lib/debts";
 import { formatPKR, formatPKRCompact } from "@/lib/format";
 import { createClient } from "@/lib/supabase/client";
 
@@ -60,6 +61,7 @@ export default function ContactsPage() {
 
   const [contacts, setContacts] = React.useState<Contact[]>([]);
   const [movements, setMovements] = React.useState<ContactMovement[]>([]);
+  const [debts, setDebts] = React.useState<DebtWithPayments[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [loadError, setLoadError] = React.useState<string | null>(null);
   const [refreshKey, setRefreshKey] = React.useState(0);
@@ -76,7 +78,7 @@ export default function ContactsPage() {
     if (!householdId) return;
 
     async function load() {
-      const [contactRes, movementRes] = await Promise.all([
+      const [contactRes, movementRes, debtRes, paymentRes] = await Promise.all([
         supabase
           .from("contacts")
           .select("*")
@@ -89,11 +91,20 @@ export default function ContactsPage() {
           .select("id, date, amount_paisa, contact_id, type, is_opening, note")
           .eq("household_id", householdId)
           .not("contact_id", "is", null),
+        // Only OPEN debts reach a contact card — a settled one is not a balance.
+        supabase
+          .from("debts")
+          .select("*")
+          .eq("household_id", householdId)
+          .eq("status", "open")
+          .not("contact_id", "is", null),
+        supabase.from("debt_payments").select("*").eq("household_id", householdId),
       ]);
 
       if (!active) return;
 
-      const firstError = contactRes.error || movementRes.error;
+      const firstError =
+        contactRes.error || movementRes.error || debtRes.error || paymentRes.error;
       if (firstError) {
         setLoadError(firstError.message);
         setLoading(false);
@@ -102,6 +113,7 @@ export default function ContactsPage() {
 
       setContacts(contactRes.data ?? []);
       setMovements((movementRes.data ?? []) as ContactMovement[]);
+      setDebts(withPayments(debtRes.data ?? [], paymentRes.data ?? []));
       setLoadError(null);
       setLoading(false);
     }
@@ -260,6 +272,9 @@ export default function ContactsPage() {
       ) : contacts.length === 0 ? (
         <EmptyState
           title="No one saved yet"
+          /* No contacts-specific art yet — the generic empty shelf, deliberately,
+             rather than a person illustration that would be the wrong subject. */
+          imageSrc="/art/empty-contacts.webp"
           description="Add the people your money actually moves between — the committee organiser, your plumber, the cousin you lend to. You can then name them on an entry and see everything that passed between you."
           action={
             <Button variant="primary" onClick={() => setAddOpen(true)} disabled={readOnly}>
@@ -278,6 +293,7 @@ export default function ContactsPage() {
               <ContactCard
                 contact={contact}
                 summary={summariseContact(contact.id, movements)}
+                udhaarPaisa={contactBalancePaisa(contact.id, debts)}
                 readOnly={readOnly}
                 onEdit={() => setEditing(contact)}
                 onDelete={() => setDeleting(contact)}
@@ -321,12 +337,15 @@ export default function ContactsPage() {
 function ContactCard({
   contact,
   summary,
+  udhaarPaisa,
   readOnly,
   onEdit,
   onDelete,
 }: {
   contact: Contact;
   summary: ReturnType<typeof summariseContact>;
+  /** Positive = they owe you. Negative = you owe them. 0 = nothing open. */
+  udhaarPaisa: number;
   readOnly: boolean;
   onEdit: () => void;
   onDelete: () => void;
@@ -396,12 +415,39 @@ function ContactCard({
       </div>
 
       {/*
+        What this person actually owes, or is owed.
+
+        This is the ONE figure on the card that is a real debt, and it comes
+        from `debts` rather than from the ledger — which is why it is separated
+        from the two below it by more than a line. The paid/received pair is the
+        net of ordinary movements and must never be read as a balance.
+      */}
+      {udhaarPaisa !== 0 && (
+        <Link
+          href="/debts"
+          className={`mt-3 flex items-center justify-between gap-2 rounded-control border px-2.5 py-2 transition-colors ${
+            udhaarPaisa > 0
+              ? "border-gain/25 bg-gain/8 hover:border-gain/40"
+              : "border-loss/25 bg-loss/8 hover:border-loss/40"
+          }`}
+        >
+          <span className="text-muted text-[10px] font-semibold uppercase tracking-widest">
+            {udhaarPaisa > 0 ? "Owes you" : "You owe"}
+          </span>
+          <span
+            className={`tnum text-[13px] font-semibold ${udhaarPaisa > 0 ? "text-gain" : "text-loss"}`}
+          >
+            {formatPKR(Math.abs(udhaarPaisa))}
+          </span>
+        </Link>
+      )}
+
+      {/*
         What has actually passed between you.
 
-        Deliberately two figures rather than one "balance". The app does not
-        model lending yet, so a single net number would read as "Ahmed owes you
-        Rs 30,000" when all it means is that more came in than went out. Paid
-        and received state only what was recorded.
+        Deliberately two figures rather than one "balance": a single net number
+        would read as "Ahmed owes you Rs 30,000" when all it means is that more
+        came in than went out. Paid and received state only what was recorded.
       */}
       <div className="border-border mt-auto grid grid-cols-2 gap-2 border-t pt-3">
         <div>

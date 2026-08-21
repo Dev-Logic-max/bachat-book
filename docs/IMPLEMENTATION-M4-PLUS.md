@@ -56,6 +56,37 @@ column to the ledger is exactly what this plan exists to avoid.
 dashboard's money-out, the Entries totals, every budget and the event-budget
 figures are all unchanged, while the account balance has dropped by Rs 5,000.
 
+### WHERE the row is SEEN — owner's decision, 2026-08-20. NOT YET BUILT.
+
+The account type decides which screen shows it, exactly as it does for every
+other movement in the product:
+
+| Paid from | Shows on | Counts as spending? |
+|---|---|---|
+| **Cash** | **Entries** (and its own debts table) | **No** |
+| Bank / wallet | Transactions only (and debts) | No |
+
+This is a VISIBILITY rule, not an accounting one. The owner re-confirmed
+separately that money-out must stay Rs 0 either way — the row appears in the
+list, tagged "Lent" / "Repaid", and is skipped by every total.
+
+**Why it is not automatic today.** `isEntryMovement` excludes `type='transfer'`
+outright, and the Entries page filters at the query level with
+`.in("type", ["income","expense"])`, so a lending leg can never reach it.
+
+**How to build it, without touching the ledger schema:**
+
+1. On the Entries page, fetch the debt-linked transaction ids —
+   `debts.opening_transaction_id` plus `debt_payments.transaction_id`.
+2. Fetch those transactions where the account's type is `cash`, and merge them
+   into the list.
+3. Tag each merged row so it renders as "Lent to Ahmed" / "Ahmed repaid", and
+   **exclude it from every total on the page.**
+
+Do NOT solve this by writing the leg as `type='expense'` for cash. That would
+put lent money into money-out, budgets, reports and Zakat — the exact failure
+this whole design exists to prevent.
+
 ### Schema
 
 ```
@@ -105,6 +136,96 @@ then you have two numbers and no way to tell which is right.
   action rather than "lend money".
 
 Both read the same tables. `lib/modules.ts` decides which route the rail shows.
+
+---
+
+## A2 · Committee (BC) — members, the payment grid, and the ledger
+
+**Status 2026-08-20:** `committees` exists with 10 columns and nothing else.
+There is no member list, no payment record, and no link to the ledger — the
+screen collects a monthly figure and a payout month, then forgets about it.
+
+### What is missing
+
+```
+committee_members
+  id, household_id
+  committee_id      → committees, ON DELETE CASCADE
+  contact_id        → contacts, ON DELETE SET NULL (contact_id)
+  member_name       text NOT NULL   -- denormalised, same rule as debts
+  payout_month      int NULL        -- which turn is theirs; NULL = undecided
+  is_me             boolean         -- exactly one row per committee
+  created_at
+
+committee_payments
+  id, household_id
+  committee_id      → committees, ON DELETE CASCADE
+  member_id         → committee_members, ON DELETE CASCADE
+  month_index       int NOT NULL    -- 1..total_members
+  amount_paisa      bigint > 0
+  paid_on           date
+  transaction_id    → transactions, ON DELETE SET NULL (transaction_id)
+  created_at
+  unique (committee_id, member_id, month_index)
+```
+
+The unique key is what makes the grid safe: one cell is one payment, so a
+double-tap cannot bill the same person twice for the same month.
+
+### The ledger rule — same as udhaar, and for the same reason
+
+**MY OWN contributions are real money and hit the ledger. Everyone else's do
+not.** Ahmed paying his Rs 5,000 into the committee is not a movement in *your*
+accounts; recording it as one would invent money you never held.
+
+- My monthly contribution → **expense**, leaving the chosen account. It really is
+  spending: the money is gone and what comes back is the payout.
+- My payout → **income**, arriving. It is the one time the committee pays you.
+- Everyone else's cells → `transaction_id` stays NULL. Tracked, never banked.
+
+That is deliberately different from debts, where lending is a transfer. A BC
+contribution is not a receivable you can call in — you get your turn when your
+turn comes, and the difference between what you put in and what you took out is
+the whole point of the "was it worth it?" figure.
+
+### The figure that makes it a flagship
+
+Taking payout month 2 of 10 is a **loan**; taking month 10 is **savings**. Same
+committee, same contribution, opposite financial products. Compare the payout
+against what the same monthly amount would have earned in a National Savings
+certificate over the same period, and state it in one line: *"Your turn came
+early — this behaved like borrowing Rs 45,000 at about 9%."*
+
+---
+
+## A3 · Contacts on mobile — reading the phone's own address book
+
+**Decided 2026-08-20.** `app/` should offer to import from the phone's contacts,
+because typing "Ahmed bhai · 0300…" on a phone keypad is the reason a committee
+member list stays empty.
+
+### Rules
+
+- **Permission is asked at the moment of use, never at startup.** The prompt
+  comes when the user taps *Add from contacts* inside Add Member or Add Debt —
+  where the reason is visible on screen. A cold permission dialog on first launch
+  is refused, and iOS never asks twice.
+- **A refusal is a normal path, not an error.** Refused means the manual name
+  field, with no nagging and no repeated prompt.
+- **Import is a PICKER, never a sync.** The user chooses one person at a time and
+  the app copies name and phone into a `contacts` row. Bulk-importing 800 numbers
+  into a finance app is a privacy incident waiting to happen, and it buries the
+  nine people who actually owe money.
+- **Nothing is uploaded until a person is chosen.** The address book is read on
+  the device; only the selected row is written to Supabase.
+- **Match on phone, not on name.** Normalise to E.164 (`+92…`) before comparing,
+  and offer "this looks like Ahmed Raza, already in your contacts" rather than
+  creating a duplicate. Pakistani numbers arrive as `0300…`, `92300…` and
+  `+92 300 …` from the same handset.
+
+Expo: `expo-contacts`, `requestPermissionsAsync()` then `presentContactPickerAsync()`
+where available. Both stores require a purpose string — declare it as reading
+contacts *only to attach a name to a payment or a debt*, which is what it does.
 
 ---
 
@@ -232,7 +353,11 @@ because the roadmap once listed it.
 The app is live at `bachat-book-seven.vercel.app` and **already has users**, so
 this is no longer theoretical.
 
-- **The seed admin password is `password@admin` on `admin@bachatbook.com`.** The
+- **The seed admin account `admin@bachatbook.com` still has its original weak
+  password, and THIS REPOSITORY IS PUBLIC.** The literal string was written out
+  here and in `SESSION-START.md` in earlier commits, so it is readable by anyone
+  in the git history and redacting it now does not undo that. **Rotate the
+  password in Supabase → Authentication → Users; that is the only fix.** The
   sign-in form is public by necessity; both halves of that credential are
   guessable from the product's own name, and the account is `super_admin`. No
   env var is leaked and none needs to be — someone simply types it into the same

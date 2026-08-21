@@ -15,6 +15,7 @@ import {
   institutionOptions,
 } from "@/components/account-options";
 import { createClient } from "@/lib/supabase/client";
+import { cn } from "@/lib/utils";
 import type { Tables, AccountType } from "@/lib/supabase/types";
 
 interface AddAccountModalProps {
@@ -118,7 +119,9 @@ export function AddAccountModal({
       institution_id: institutionId === "none" ? null : institutionId,
       name: name.trim(),
       type,
-      account_number_last4: last4.trim() || null,
+      // Cash never carries one, even if a value was typed before the type
+      // was switched — the field is hidden by then, so it would be invisible.
+      account_number_last4: type === "cash" ? null : last4.trim() || null,
       currency: "PKR",
       balance_paisa: 0,
       is_locked: isLocked,
@@ -187,7 +190,14 @@ export function AddAccountModal({
           required
         />
 
-        <div className="grid grid-cols-2 gap-3">
+        {/*
+          CASH HAS NO ACCOUNT NUMBER, so it is not asked for one.
+          The field said "(Optional)" and enforced nothing, but offering "Last 4
+          Digits" for notes in a drawer is a question with no possible answer —
+          the same reason the lock control below is hidden for cash. The type
+          select takes the full width rather than leaving a hole beside it.
+        */}
+        <div className={cn("grid gap-3", type !== "cash" && "grid-cols-2")}>
           <RichSelect
             label="Account Type"
             value={type}
@@ -196,14 +206,16 @@ export function AddAccountModal({
             disabled={typeOptions.length < 2}
           />
 
-          <Input
-            label="Last 4 Digits (Optional)"
-            placeholder="e.g. 4821"
-            maxLength={4}
-            value={last4}
-            onChange={(e) => setLast4(e.target.value)}
-            className="ltr"
-          />
+          {type !== "cash" && (
+            <Input
+              label="Last 4 Digits (Optional)"
+              placeholder="e.g. 4821"
+              maxLength={4}
+              value={last4}
+              onChange={(e) => setLast4(e.target.value)}
+              className="ltr"
+            />
+          )}
         </div>
 
         {/*

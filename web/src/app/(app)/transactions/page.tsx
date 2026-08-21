@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { useSession } from "@/components/session-provider";
 import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/empty-state";
 import { Input } from "@/components/ui/input";
 import { RichSelect } from "@/components/ui/select";
 import { CategoryChip, CategoryIcon, toneColor } from "@/components/category-icon";
@@ -497,20 +498,24 @@ function TransactionsPageInner() {
           Loading ledger entries...
         </div>
       ) : filteredTransactions.length === 0 ? (
-        <div className="bg-surface border-border rounded-panel border p-12 text-center">
-          <Landmark size={40} className="text-muted mx-auto mb-3" />
-          <h3 className="font-display text-base font-semibold">No Transactions Found</h3>
-          <p className="text-muted text-xs mt-1 max-w-sm mx-auto">
-            {search || selectedAccountId !== "all" || selectedType !== "all"
-              ? "Try resetting your filter parameters."
-              : "Start by logging your first income, expense, or account transfer."}
-          </p>
-          <div className="mt-4 flex items-center justify-center gap-3">
+        <EmptyState
+          title={
+            search || selectedAccountId !== "all" || selectedType !== "all"
+              ? "Nothing matches those filters"
+              : "No transactions yet"
+          }
+          imageSrc="/art/empty-transactions.webp"
+          description={
+            search || selectedAccountId !== "all" || selectedType !== "all"
+              ? "Your ledger is not empty — these filters just do not match anything in it. Clear one and try again."
+              : "This is every movement that touched a bank or wallet, plus transfers between your own accounts. Cash-only spending lives in Entries."
+          }
+          action={
             <Button variant="primary" onClick={() => setAddTxOpen(true)}>
-              + Add Transaction
+              Add a transaction
             </Button>
-          </div>
-        </div>
+          }
+        />
       ) : (
         <div className="lift bg-surface border-border rounded-panel border overflow-hidden shadow-sm">
           {/*

@@ -147,7 +147,7 @@ export const CATEGORIES: Category[] = [
   cat("freelance", "Freelance (USD)", "Globe", 3, "income", "income"),
   cat("remittance", "Remittance", "Send", 3, "income", "income"),
   cat("rental", "Rental income", "Building2", 3, "income", "income"),
-  cat("profit", "Profit on savings", "PiggyBank", 3, "income", "income"),
+  cat("profit", "Profit on savings", "Vault", 3, "income", "income"),
   cat("committeepayout", "Committee payout", "Users", 3, "income", "income"),
 ];
 

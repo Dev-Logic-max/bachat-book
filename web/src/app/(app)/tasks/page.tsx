@@ -930,7 +930,7 @@ function TaskCard({
         <div className="relative flex shrink-0 items-center">
           <div
             className={cn(
-              "pointer-events-none absolute end-full z-10 flex items-center rounded-control opacity-0 transition-opacity duration-150",
+              "pointer-events-none absolute inset-e-full z-10 flex items-center rounded-control opacity-0 transition-opacity duration-150",
               "group-hover:pointer-events-auto group-hover:opacity-100",
               "group-focus-within:pointer-events-auto group-focus-within:opacity-100",
               variant === "card" ? "bg-surface" : "bg-surface-subtle",

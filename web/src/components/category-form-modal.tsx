@@ -52,7 +52,7 @@ const ICON_CHOICES = [
   "BookOpen", "NotebookPen", "Users", "Baby", "PawPrint", "Scissors",
   "Dumbbell", "Sparkles", "Tv", "Gamepad2", "Plane", "Hotel",
   "Moon", "PartyPopper", "HandHeart", "HandCoins", "Landmark", "Percent",
-  "CreditCard", "Briefcase", "Store", "Laptop", "TrendingUp", "PiggyBank",
+  "CreditCard", "Briefcase", "Store", "Laptop", "TrendingUp", "Vault",
   "Banknote", "Wallet", "ReceiptText", "FileText", "Globe", "Wheat",
 ];
 
@@ -354,7 +354,7 @@ export function CategoryFormModal({
           <div
             role="radiogroup"
             aria-label="Category glyph"
-            className="border-border bg-surface-subtle/50 scroll-hidden grid max-h-[132px] grid-cols-10 gap-1 overflow-y-auto rounded-control border p-2"
+            className="border-border bg-surface-subtle/50 scroll-hidden grid max-h-33 grid-cols-10 gap-1 overflow-y-auto rounded-control border p-2"
           >
             {ICON_CHOICES.map((choice) => {
               const active = choice === icon;

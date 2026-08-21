@@ -114,7 +114,7 @@ export const INVESTMENT_KINDS: InvestmentKindDef[] = [
     key: "fixed_deposit",
     label: "Term deposit",
     labelUr: "مدتی کھاتہ",
-    icon: "PiggyBank",
+    icon: "Vault",
     hasUnits: false,
     hint: "A bank TDR or a fixed deposit with a maturity date.",
   },
@@ -345,6 +345,15 @@ export type PayoutBucket = {
   receivedPaisa: number;
   reinvestedPaisa: number;
   count: number;
+  /**
+   * The rows this bucket totals, newest first.
+   *
+   * Carried so the roll-up can be OPENED. A period row is an aggregate, and an
+   * aggregate has no edit or delete — correcting a profit typed as 115000
+   * instead of 11500 means reaching the individual payment, which the summary
+   * alone could not do.
+   */
+  payouts: InvestmentPayout[];
 };
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -382,13 +391,19 @@ export function payoutsByPeriod(
       receivedPaisa: 0,
       reinvestedPaisa: 0,
       count: 0,
+      payouts: [],
     };
 
     if (payout.destination === "received") bucket.receivedPaisa += Number(payout.amount_paisa);
     else bucket.reinvestedPaisa += Number(payout.amount_paisa);
     bucket.count += 1;
+    bucket.payouts.push(payout);
 
     buckets.set(key, bucket);
+  }
+
+  for (const bucket of buckets.values()) {
+    bucket.payouts.sort((a, b) => (a.date < b.date ? 1 : -1));
   }
 
   return [...buckets.values()].sort((a, b) => (a.key < b.key ? 1 : -1));

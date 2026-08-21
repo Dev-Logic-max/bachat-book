@@ -1,8 +1,9 @@
 "use client";
 
 import * as React from "react";
-import { X, Trash2, Split, ArrowUpRight, ArrowDownRight, Plus } from "lucide-react";
+import { Trash2, Split, ArrowUpRight, ArrowDownRight, Plus, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Drawer } from "@/components/ui/drawer";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
 import { Select, RichSelect } from "@/components/ui/select";
@@ -293,24 +294,52 @@ export function TransactionDrawer({
   const currentBalance = Number(transaction.accounts?.balance_paisa ?? 0);
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-navy-950/60 backdrop-blur-xs flex justify-end">
-      <div className="bg-surface border-l border-border w-full max-w-md h-full overflow-y-auto p-6 shadow-2xl flex flex-col justify-between">
-        <div>
-          {/* Header */}
-          <div className="flex items-center justify-between pb-4 border-b border-border">
-            <div className="flex items-center gap-2">
-              {/* Direction derives from the sign. These were the wrong way round:
-                  income drew a down-arrow next to a green +. */}
-              <span className={`p-1.5 rounded-full ${isIncome ? "bg-gain-subtle text-gain" : "bg-loss-subtle text-loss"}`}>
-                {isIncome ? <ArrowUpRight size={18} /> : <ArrowDownRight size={18} />}
-              </span>
-              <h2 className="font-display text-lg font-bold">Transaction Details</h2>
-            </div>
-            <button onClick={onClose} className="p-1 text-muted hover:text-foreground rounded-full">
-              <X size={20} />
-            </button>
-          </div>
+    /*
+      THE SHARED `Drawer`, not a hand-rolled panel.
+      This was its own `fixed inset-0` with a plain `overflow-y-auto` body, and
+      it was missing three things the shared component already has: a visible
+      scrollbar down the right edge (no `scroll-hidden`), no click-outside to
+      close, and a header and action row that scrolled away with the fields.
+      It also sat outside Modal's overlay stack, so Escape did nothing.
+    */
+    <Drawer
+      isOpen
+      onClose={onClose}
+      title="Transaction details"
+      subtitle={`${transaction.accounts?.name ?? "Unassigned"} · ${transaction.date}`}
+      width="sm:w-[30rem]"
+      icon={
+        // Direction derives from the SIGN. These were the wrong way round once:
+        // income drew a down-arrow next to a green +.
+        <span className={isIncome ? "text-gain" : "text-loss"}>
+          {isIncome ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+        </span>
+      }
+      footer={
+        <div className="flex w-full items-center justify-between gap-3">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={() => setConfirmOpen(true)}
+            className="text-loss hover:bg-loss-subtle"
+          >
+            <Trash2 size={16} />
+            <span>Delete</span>
+          </Button>
 
+          <div className="flex items-center gap-2">
+            <Button type="button" variant="secondary" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="button" variant="primary" onClick={handleSave} isLoading={loading}>
+              Save changes
+            </Button>
+          </div>
+        </div>
+      }
+    >
+      <>
+        <div>
           {/* Amount Hero */}
           <div className="my-6 text-center bg-surface-subtle border border-border rounded-panel p-6">
             <span className="text-muted text-[11px] uppercase tracking-wider block">Transaction Amount</span>
@@ -466,29 +495,6 @@ export function TransactionDrawer({
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="pt-6 border-t border-border flex items-center justify-between gap-3">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={() => setConfirmOpen(true)}
-            className="text-loss hover:bg-loss-subtle"
-          >
-            <Trash2 size={16} />
-            <span>Delete</span>
-          </Button>
-
-          <div className="flex items-center gap-2">
-            <Button type="button" variant="secondary" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="button" variant="primary" onClick={handleSave} isLoading={loading}>
-              Save Changes
-            </Button>
-          </div>
-        </div>
-      </div>
-
       <ConfirmDeleteModal
         isOpen={confirmOpen}
         onClose={() => setConfirmOpen(false)}
@@ -519,6 +525,7 @@ export function TransactionDrawer({
         }
         confirmLabel="Delete transaction"
       />
-    </div>
+      </>
+    </Drawer>
   );
 }

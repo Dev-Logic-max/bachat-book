@@ -427,3 +427,68 @@
     transition-duration: 0.01ms !important;
   }
 }
+
+/* -------------------------------------------------------------------------- *
+ * Print
+ *
+ * The Reports page offers "Save as PDF", which is the browser's own print
+ * dialog rather than a bundled PDF library — the browser already ships a
+ * renderer, and using it keeps text selectable and costs no bundle weight on a
+ * cheap Android handset.
+ *
+ * What that needs from CSS: the app chrome gone, the report on white, and no
+ * row split across a page break.
+ * -------------------------------------------------------------------------- */
+@media print {
+  /* The rail, the header band and the bottom-nav island are navigation, not
+     content. `print:hidden` on the page handles the rest. */
+  aside,
+  header,
+  nav,
+  [role="dialog"],
+  [data-print-hide] {
+    display: none !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+  }
+
+  /* Full bleed: <main>'s padding and max-width are screen layout. */
+  main {
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+  }
+
+  #report-print-area {
+    color: #000 !important;
+    font-size: 10.5pt;
+  }
+
+  #report-print-area table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  /* A row half on one page and half on the next is unreadable, and a heading
+     stranded at the foot of a page is worse. */
+  #report-print-area tr,
+  #report-print-area section {
+    break-inside: avoid;
+  }
+
+  #report-print-area h2 {
+    break-after: avoid;
+  }
+
+  #report-print-area thead {
+    display: table-header-group;
+  }
+
+  @page {
+    margin: 14mm;
+  }
+}
